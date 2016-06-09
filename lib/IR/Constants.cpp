@@ -567,8 +567,7 @@ Constant *ConstantInt::get(Type *Ty, uint64_t V, bool isSigned) {
   return C;
 }
 
-ConstantInt *ConstantInt::get(IntegerType *Ty, uint64_t V, 
-                              bool isSigned) {
+ConstantInt *ConstantInt::get(IntegerType *Ty, uint64_t V, bool isSigned) {
   return get(Ty->getContext(), APInt(Ty->getBitWidth(), V, isSigned));
 }
 
@@ -592,8 +591,7 @@ Constant *ConstantInt::get(Type *Ty, const APInt& V) {
   return C;
 }
 
-ConstantInt *ConstantInt::get(IntegerType* Ty, StringRef Str,
-                              uint8_t radix) {
+ConstantInt *ConstantInt::get(IntegerType* Ty, StringRef Str, uint8_t radix) {
   return get(Ty->getContext(), APInt(Ty->getBitWidth(), Str, radix));
 }
 
@@ -1539,8 +1537,7 @@ Constant *ConstantExpr::getPointerBitCastOrAddrSpaceCast(Constant *S,
   return getBitCast(S, Ty);
 }
 
-Constant *ConstantExpr::getIntegerCast(Constant *C, Type *Ty,
-                                       bool isSigned) {
+Constant *ConstantExpr::getIntegerCast(Constant *C, Type *Ty, bool isSigned) {
   assert(C->getType()->isIntOrIntVectorTy() &&
          Ty->isIntOrIntVectorTy() && "Invalid cast");
   unsigned SrcBits = C->getType()->getScalarSizeInBits();
@@ -2499,6 +2496,11 @@ Constant *ConstantDataVector::get(LLVMContext &Context, ArrayRef<uint16_t> Elts)
   return getImpl(StringRef(const_cast<char *>(Data), Elts.size()*2), Ty);
 }
 Constant *ConstantDataVector::get(LLVMContext &Context, ArrayRef<uint32_t> Elts){
+  Type *Ty = VectorType::get(Type::getInt32Ty(Context), Elts.size());
+  const char *Data = reinterpret_cast<const char *>(Elts.data());
+  return getImpl(StringRef(const_cast<char *>(Data), Elts.size()*4), Ty);
+}
+Constant *ConstantDataVector::get(LLVMContext &Context, ArrayRef<int32_t> Elts){
   Type *Ty = VectorType::get(Type::getInt32Ty(Context), Elts.size());
   const char *Data = reinterpret_cast<const char *>(Elts.data());
   return getImpl(StringRef(const_cast<char *>(Data), Elts.size()*4), Ty);

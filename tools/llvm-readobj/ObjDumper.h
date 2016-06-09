@@ -20,7 +20,7 @@ class ObjectFile;
 }
 namespace codeview {
 class MemoryTypeTableBuilder;
-};
+}
 
 class ScopedPrinter;
 
@@ -62,6 +62,7 @@ public:
   virtual void printCOFFExports() { }
   virtual void printCOFFDirectives() { }
   virtual void printCOFFBaseReloc() { }
+  virtual void printCOFFDebugDirectory() { }
   virtual void printCodeViewDebugInfo() { }
   virtual void
   mergeCodeViewTypes(llvm::codeview::MemoryTypeTableBuilder &CVTypes) {}

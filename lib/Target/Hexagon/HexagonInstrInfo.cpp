@@ -685,13 +685,8 @@ void HexagonInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   unsigned KillFlag = getKillRegState(KillSrc);
 
   if (Hexagon::IntRegsRegClass.contains(SrcReg, DestReg)) {
-    auto MIB = BuildMI(MBB, I, DL, get(Hexagon::A2_tfr), DestReg)
+    BuildMI(MBB, I, DL, get(Hexagon::A2_tfr), DestReg)
       .addReg(SrcReg, KillFlag);
-    // We could have a R12 = COPY R2, D1<imp-use, kill> instruction.
-    // Transfer the kill flags.
-    for (auto &Op : I->operands())
-      if (Op.isReg() && Op.isKill() && Op.isImplicit() && Op.isUse())
-        MIB.addReg(Op.getReg(), RegState::Kill | RegState::Implicit);
     return;
   }
   if (Hexagon::DoubleRegsRegClass.contains(SrcReg, DestReg)) {
@@ -920,6 +915,16 @@ bool HexagonInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI)
   bool Is128B = false;
 
   switch (Opc) {
+    case TargetOpcode::COPY: {
+      MachineOperand &MD = MI->getOperand(0);
+      MachineOperand &MS = MI->getOperand(1);
+      if (MD.getReg() != MS.getReg() && !MS.isUndef()) {
+        copyPhysReg(MBB, MI, DL, MD.getReg(), MS.getReg(), MS.isKill());
+        std::prev(MI)->copyImplicitOps(*MBB.getParent(), *MI);
+      }
+      MBB.erase(MI);
+      return true;
+    }
     case Hexagon::ALIGNA:
       BuildMI(MBB, MI, DL, get(Hexagon::A2_andir), MI->getOperand(0).getReg())
           .addReg(HRI.getFrameRegister())
@@ -1254,6 +1259,7 @@ bool HexagonInstrInfo::isPredicated(const MachineInstr &MI) const {
   return (F >> HexagonII::PredicatedPos) & HexagonII::PredicatedMask;
 }
 
+
 bool HexagonInstrInfo::PredicateInstruction(
     MachineInstr &MI, ArrayRef<MachineOperand> Cond) const {
   if (Cond.empty() || isNewValueJump(Cond[0].getImm()) ||
@@ -1312,6 +1318,7 @@ bool HexagonInstrInfo::SubsumesPredicate(ArrayRef<MachineOperand> Pred1,
   return false;
 }
 
+
 bool HexagonInstrInfo::DefinesPredicate(
     MachineInstr &MI, std::vector<MachineOperand> &Pred) const {
   auto &HRI = getRegisterInfo();
@@ -1328,91 +1335,9 @@ bool HexagonInstrInfo::DefinesPredicate(
   return false;
 }
 
+
 bool HexagonInstrInfo::isPredicable(MachineInstr &MI) const {
-  bool isPred = MI.getDesc().isPredicable();
-
-  if (!isPred)
-    return false;
-
-  const int Opc = MI.getOpcode();
-  int NumOperands = MI.getNumOperands();
-
-  // Keep a flag for upto 4 operands in the instructions, to indicate if
-  // that operand has been constant extended.
-  bool OpCExtended[4] = {false};
-  if (NumOperands > 4)
-    NumOperands = 4;
-
-  for (int i = 0; i < NumOperands; i++)
-    OpCExtended[i] = (isOperandExtended(&MI, i) && isConstExtended(&MI));
-
-  switch(Opc) {
-  case Hexagon::A2_tfrsi:
-    return (isOperandExtended(&MI, 1) && isConstExtended(&MI)) ||
-           isInt<12>(MI.getOperand(1).getImm());
-
-  case Hexagon::S2_storerd_io:
-    return isShiftedUInt<6,3>(MI.getOperand(1).getImm());
-
-  case Hexagon::S2_storeri_io:
-  case Hexagon::S2_storerinew_io:
-    return isShiftedUInt<6,2>(MI.getOperand(1).getImm());
-
-  case Hexagon::S2_storerh_io:
-  case Hexagon::S2_storerhnew_io:
-    return isShiftedUInt<6,1>(MI.getOperand(1).getImm());
-
-  case Hexagon::S2_storerb_io:
-  case Hexagon::S2_storerbnew_io:
-    return isUInt<6>(MI.getOperand(1).getImm());
-
-  case Hexagon::L2_loadrd_io:
-    return isShiftedUInt<6,3>(MI.getOperand(2).getImm());
-
-  case Hexagon::L2_loadri_io:
-    return isShiftedUInt<6,2>(MI.getOperand(2).getImm());
-
-  case Hexagon::L2_loadrh_io:
-  case Hexagon::L2_loadruh_io:
-    return isShiftedUInt<6,1>(MI.getOperand(2).getImm());
-
-  case Hexagon::L2_loadrb_io:
-  case Hexagon::L2_loadrub_io:
-    return isUInt<6>(MI.getOperand(2).getImm());
-
-  case Hexagon::L2_loadrd_pi:
-    return isShiftedInt<4,3>(MI.getOperand(3).getImm());
-
-  case Hexagon::L2_loadri_pi:
-    return isShiftedInt<4,2>(MI.getOperand(3).getImm());
-
-  case Hexagon::L2_loadrh_pi:
-  case Hexagon::L2_loadruh_pi:
-    return isShiftedInt<4,1>(MI.getOperand(3).getImm());
-
-  case Hexagon::L2_loadrb_pi:
-  case Hexagon::L2_loadrub_pi:
-    return isInt<4>(MI.getOperand(3).getImm());
-
-  case Hexagon::S4_storeirb_io:
-  case Hexagon::S4_storeirh_io:
-  case Hexagon::S4_storeiri_io:
-    return (OpCExtended[1] || isUInt<6>(MI.getOperand(1).getImm())) &&
-           (OpCExtended[2] || isInt<6>(MI.getOperand(2).getImm()));
-
-  case Hexagon::A2_addi:
-    return isInt<8>(MI.getOperand(2).getImm());
-
-  case Hexagon::A2_aslh:
-  case Hexagon::A2_asrh:
-  case Hexagon::A2_sxtb:
-  case Hexagon::A2_sxth:
-  case Hexagon::A2_zxtb:
-  case Hexagon::A2_zxth:
-    return true;
-  }
-
-  return true;
+  return MI.getDesc().isPredicable();
 }
 
 
@@ -3496,6 +3421,7 @@ int HexagonInstrInfo::getDotNewOp(const MachineInstr* MI) const {
   }
   return 0;
 }
+
 
 // Returns the opcode to use when converting MI, which is a conditional jump,
 // into a conditional instruction which uses the .new value of the predicate.

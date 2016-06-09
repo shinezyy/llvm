@@ -444,7 +444,6 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
     //
     // MBB::size() uses instr_iterator to count. Here we need a bundle to count
     // as a single instruction.
-    unsigned RemainingInstrs = std::distance(MBB->begin(), MBB->end());
     for(MachineBasicBlock::iterator RegionEnd = MBB->end();
         RegionEnd != MBB->begin(); RegionEnd = Scheduler.begin()) {
 
@@ -452,15 +451,13 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
       if (RegionEnd != MBB->end() ||
           isSchedBoundary(&*std::prev(RegionEnd), &*MBB, MF, TII)) {
         --RegionEnd;
-        // Count the boundary instruction.
-        --RemainingInstrs;
       }
 
       // The next region starts above the previous region. Look backward in the
       // instruction stream until we find the nearest boundary.
       unsigned NumRegionInstrs = 0;
       MachineBasicBlock::iterator I = RegionEnd;
-      for(;I != MBB->begin(); --I, --RemainingInstrs) {
+      for (;I != MBB->begin(); --I) {
         if (isSchedBoundary(&*std::prev(I), &*MBB, MF, TII))
           break;
         if (!I->isDebugValue())
@@ -483,8 +480,7 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
             << "\n  From: " << *I << "    To: ";
             if (RegionEnd != MBB->end()) dbgs() << *RegionEnd;
             else dbgs() << "End";
-            dbgs() << " RegionInstrs: " << NumRegionInstrs
-            << " Remaining: " << RemainingInstrs << "\n");
+            dbgs() << " RegionInstrs: " << NumRegionInstrs << '\n');
       if (DumpCriticalPathLength) {
         errs() << MF->getName();
         errs() << ":BB# " << MBB->getNumber();
@@ -502,7 +498,6 @@ void MachineSchedulerBase::scheduleRegions(ScheduleDAGInstrs &Scheduler,
       // scheduler for the top of it's scheduled region.
       RegionEnd = Scheduler.begin();
     }
-    assert(RemainingInstrs == 0 && "Instruction count mismatch!");
     Scheduler.finishBlock();
     // FIXME: Ideally, no further passes should rely on kill flags. However,
     // thumb2 size reduction is currently an exception, so the PostMIScheduler
@@ -887,16 +882,8 @@ void ScheduleDAGMILive::enterRegion(MachineBasicBlock *bb,
   ShouldTrackPressure = SchedImpl->shouldTrackPressure();
   ShouldTrackLaneMasks = SchedImpl->shouldTrackLaneMasks();
 
-  if (ShouldTrackLaneMasks) {
-    if (!ShouldTrackPressure)
-      report_fatal_error("ShouldTrackLaneMasks requires ShouldTrackPressure");
-    // Dead subregister defs have no users and therefore no dependencies,
-    // moving them around may cause liveintervals to degrade into multiple
-    // components. Change independent components to have their own vreg to avoid
-    // this.
-    if (!DisconnectedComponentsRenamed)
-      LIS->renameDisconnectedComponents();
-  }
+  assert((!ShouldTrackLaneMasks || ShouldTrackPressure) &&
+         "ShouldTrackLaneMasks requires ShouldTrackPressure");
 }
 
 // Setup the register pressure trackers for the top scheduled top and bottom
@@ -2401,7 +2388,8 @@ const char *GenericSchedulerBase::getReasonStr(
   GenericSchedulerBase::CandReason Reason) {
   switch (Reason) {
   case NoCand:         return "NOCAND    ";
-  case PhysRegCopy:    return "PREG-COPY";
+  case Only1:          return "ONLY1     ";
+  case PhysRegCopy:    return "PREG-COPY ";
   case RegExcess:      return "REG-EXCESS";
   case RegCritical:    return "REG-CRIT  ";
   case Stall:          return "STALL     ";
@@ -2533,10 +2521,14 @@ static bool tryLatency(GenericSchedulerBase::SchedCandidate &TryCand,
   return false;
 }
 
+static void tracePick(GenericSchedulerBase::CandReason Reason, bool IsTop) {
+  DEBUG(dbgs() << "Pick " << (IsTop ? "Top " : "Bot ")
+        << GenericSchedulerBase::getReasonStr(Reason) << '\n');
+}
+
 static void tracePick(const GenericSchedulerBase::SchedCandidate &Cand,
                       bool IsTop) {
-  DEBUG(dbgs() << "Pick " << (IsTop ? "Top " : "Bot ")
-        << GenericSchedulerBase::getReasonStr(Cand.Reason) << '\n');
+  tracePick(Cand.Reason, IsTop);
 }
 
 void GenericScheduler::initialize(ScheduleDAGMI *dag) {
@@ -2922,12 +2914,12 @@ SUnit *GenericScheduler::pickNodeBidirectional(bool &IsTopNode) {
   // efficient, but also provides the best heuristics for CriticalPSets.
   if (SUnit *SU = Bot.pickOnlyChoice()) {
     IsTopNode = false;
-    DEBUG(dbgs() << "Pick Bot ONLY1\n");
+    tracePick(Only1, false);
     return SU;
   }
   if (SUnit *SU = Top.pickOnlyChoice()) {
     IsTopNode = true;
-    DEBUG(dbgs() << "Pick Top ONLY1\n");
+    tracePick(Only1, true);
     return SU;
   }
   CandPolicy NoPolicy;
@@ -3192,7 +3184,9 @@ SUnit *PostGenericScheduler::pickNode(bool &IsTopNode) {
   SUnit *SU;
   do {
     SU = Top.pickOnlyChoice();
-    if (!SU) {
+    if (SU) {
+      tracePick(Only1, true);
+    } else {
       CandPolicy NoPolicy;
       SchedCandidate TopCand(NoPolicy);
       // Set the top-down policy based on the state of the current top zone and

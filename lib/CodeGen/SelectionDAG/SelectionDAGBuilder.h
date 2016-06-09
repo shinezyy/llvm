@@ -22,10 +22,11 @@
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/IR/CallSite.h"
-#include "llvm/IR/Statepoint.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Statepoint.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Target/TargetLowering.h"
+#include <utility>
 #include <vector>
 
 namespace llvm {
@@ -101,8 +102,8 @@ class SelectionDAGBuilder {
     unsigned SDNodeOrder;
   public:
     DanglingDebugInfo() : DI(nullptr), dl(DebugLoc()), SDNodeOrder(0) { }
-    DanglingDebugInfo(const DbgValueInst *di, DebugLoc DL, unsigned SDNO) :
-      DI(di), dl(DL), SDNodeOrder(SDNO) { }
+    DanglingDebugInfo(const DbgValueInst *di, DebugLoc DL, unsigned SDNO)
+        : DI(di), dl(std::move(DL)), SDNodeOrder(SDNO) {}
     const DbgValueInst* getDI() { return DI; }
     DebugLoc getdl() { return dl; }
     unsigned getSDNodeOrder() { return SDNodeOrder; }
@@ -260,8 +261,9 @@ private:
   };
   struct JumpTableHeader {
     JumpTableHeader(APInt F, APInt L, const Value *SV, MachineBasicBlock *H,
-                    bool E = false):
-      First(F), Last(L), SValue(SV), HeaderBB(H), Emitted(E) {}
+                    bool E = false)
+        : First(std::move(F)), Last(std::move(L)), SValue(SV), HeaderBB(H),
+          Emitted(E) {}
     APInt First;
     APInt Last;
     const Value *SValue;
@@ -286,9 +288,9 @@ private:
     BitTestBlock(APInt F, APInt R, const Value *SV, unsigned Rg, MVT RgVT,
                  bool E, bool CR, MachineBasicBlock *P, MachineBasicBlock *D,
                  BitTestInfo C, BranchProbability Pr)
-        : First(F), Range(R), SValue(SV), Reg(Rg), RegVT(RgVT), Emitted(E),
-          ContiguousRange(CR), Parent(P), Default(D), Cases(std::move(C)),
-          Prob(Pr) {}
+        : First(std::move(F)), Range(std::move(R)), SValue(SV), Reg(Rg),
+          RegVT(RgVT), Emitted(E), ContiguousRange(CR), Parent(P), Default(D),
+          Cases(std::move(C)), Prob(Pr) {}
     APInt First;
     APInt Range;
     const Value *SValue;
@@ -454,7 +456,14 @@ private:
   ///
   ///     c. After we finish selecting the basic block, in FinishBasicBlock if
   ///        the StackProtectorDescriptor attached to the SelectionDAGBuilder is
-  ///        initialized, we first find a splice point in the parent basic block
+  ///        initialized, we produce the validation code with one of these
+  ///        techniques:
+  ///          1) with a call to a guard check function
+  ///          2) with inlined instrumentation
+  ///
+  ///        1) We insert a call to the check function before the terminator.
+  ///
+  ///        2) We first find a splice point in the parent basic block
   ///        before the terminator and then splice the terminator of said basic
   ///        block into the success basic block. Then we code-gen a new tail for
   ///        the parent basic block consisting of the two loads, the comparison,
@@ -473,15 +482,22 @@ private:
       return ParentMBB && SuccessMBB && FailureMBB;
     }
 
+    bool shouldEmitFunctionBasedCheckStackProtector() const {
+      return ParentMBB && !SuccessMBB && !FailureMBB;
+    }
+
     /// Initialize the stack protector descriptor structure for a new basic
     /// block.
-    void initialize(const BasicBlock *BB, MachineBasicBlock *MBB) {
+    void initialize(const BasicBlock *BB, MachineBasicBlock *MBB,
+                    bool FunctionBasedInstrumentation) {
       // Make sure we are not initialized yet.
       assert(!shouldEmitStackProtector() && "Stack Protector Descriptor is "
              "already initialized!");
       ParentMBB = MBB;
-      SuccessMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ true);
-      FailureMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ false, FailureMBB);
+      if (!FunctionBasedInstrumentation) {
+        SuccessMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ true);
+        FailureMBB = AddSuccessorMBB(BB, MBB, /* IsLikely */ false, FailureMBB);
+      }
     }
 
     /// Reset state that changes when we handle different basic blocks.
@@ -909,6 +925,8 @@ private:
                                SDValue Value, bool IsSigned);
 
   void HandlePHINodesInSuccessorBlocks(const BasicBlock *LLVMBB);
+
+  void emitInlineAsmError(ImmutableCallSite CS, const Twine &Message);
 
   /// EmitFuncArgumentDbgValue - If V is an function argument then create
   /// corresponding DBG_VALUE machine instruction for it now. At the end of

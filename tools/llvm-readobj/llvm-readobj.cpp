@@ -196,6 +196,11 @@ namespace opts {
   COFFBaseRelocs("coff-basereloc",
                  cl::desc("Display the PE/COFF .reloc section"));
 
+  // -coff-debug-directory
+  cl::opt<bool>
+  COFFDebugDirectory("coff-debug-directory",
+                     cl::desc("Display the PE/COFF debug directory"));
+
   // -macho-data-in-code
   cl::opt<bool>
   MachODataInCode("macho-data-in-code",
@@ -392,6 +397,8 @@ static void dumpObject(const ObjectFile *Obj) {
       Dumper->printCOFFDirectives();
     if (opts::COFFBaseRelocs)
       Dumper->printCOFFBaseReloc();
+    if (opts::COFFDebugDirectory)
+      Dumper->printCOFFDebugDirectory();
     if (opts::CodeView)
       Dumper->printCodeViewDebugInfo();
     if (opts::CodeViewMergedTypes)
@@ -421,14 +428,17 @@ static void dumpArchive(const Archive *Arc) {
     if (std::error_code EC = ErrorOrChild.getError())
       reportError(Arc->getFileName(), EC.message());
     const auto &Child = *ErrorOrChild;
-    ErrorOr<std::unique_ptr<Binary>> ChildOrErr = Child.getAsBinary();
-    if (std::error_code EC = ChildOrErr.getError()) {
-      // Ignore non-object files.
-      if (EC != object_error::invalid_file_type)
-        reportError(Arc->getFileName(), EC.message());
+    Expected<std::unique_ptr<Binary>> ChildOrErr = Child.getAsBinary();
+    if (!ChildOrErr) {
+      if (auto E = isNotObjectErrorInvalidFileType(ChildOrErr.takeError())) {
+        std::string Buf;
+        raw_string_ostream OS(Buf);
+        logAllUnhandledErrors(ChildOrErr.takeError(), OS, "");
+        OS.flush();
+        reportError(Arc->getFileName(), Buf);
+      }
       continue;
     }
-
     if (ObjectFile *Obj = dyn_cast<ObjectFile>(&*ChildOrErr.get()))
       dumpObject(Obj);
     else
@@ -439,13 +449,18 @@ static void dumpArchive(const Archive *Arc) {
 /// @brief Dumps each object file in \a MachO Universal Binary;
 static void dumpMachOUniversalBinary(const MachOUniversalBinary *UBinary) {
   for (const MachOUniversalBinary::ObjectForArch &Obj : UBinary->objects()) {
-    ErrorOr<std::unique_ptr<MachOObjectFile>> ObjOrErr = Obj.getAsObjectFile();
+    Expected<std::unique_ptr<MachOObjectFile>> ObjOrErr = Obj.getAsObjectFile();
     if (ObjOrErr)
       dumpObject(&*ObjOrErr.get());
+    else if (auto E = isNotObjectErrorInvalidFileType(ObjOrErr.takeError())) {
+      std::string Buf;
+      raw_string_ostream OS(Buf);
+      logAllUnhandledErrors(ObjOrErr.takeError(), OS, "");
+      OS.flush();
+      reportError(UBinary->getFileName(), Buf);
+    }
     else if (ErrorOr<std::unique_ptr<Archive>> AOrErr = Obj.getAsArchive())
       dumpArchive(&*AOrErr.get());
-    else
-      reportError(UBinary->getFileName(), ObjOrErr.getError().message());
   }
 }
 
@@ -472,7 +487,7 @@ static void dumpInput(StringRef File) {
 }
 
 int main(int argc, const char *argv[]) {
-  sys::PrintStackTraceOnErrorSignal();
+  sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;
 

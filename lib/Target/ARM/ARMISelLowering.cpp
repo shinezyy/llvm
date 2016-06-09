@@ -24,6 +24,7 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/IntrinsicLowering.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -1843,8 +1844,13 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     const GlobalValue *GV = G->getGlobal();
     isDirect = true;
     bool isDef = GV->isStrongDefinitionForLinker();
-    bool isStub = (!isDef && Subtarget->isTargetMachO()) &&
-                   getTargetMachine().getRelocationModel() != Reloc::Static;
+    const TargetMachine &TM = getTargetMachine();
+    Reloc::Model RM = TM.getRelocationModel();
+    const Triple &TargetTriple = TM.getTargetTriple();
+    bool isStub =
+        !shouldAssumeDSOLocal(RM, TargetTriple, *GV->getParent(), GV) &&
+        Subtarget->isTargetMachO();
+
     isARMFunc = !Subtarget->isThumb() || (isStub && !Subtarget->isMClass());
     // ARM call to a local ARM function is predicable.
     isLocalARMFunc = !Subtarget->isThumb() && (isDef || !ARMInterworking);
@@ -1919,7 +1925,7 @@ ARMTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   } else {
     if (!isDirect && !Subtarget->hasV5TOps())
       CallOpc = ARMISD::CALL_NOLINK;
-    else if (doesNotRet && isDirect && Subtarget->hasRAS() &&
+    else if (doesNotRet && isDirect && Subtarget->hasRetAddrStack() &&
              // Emit regular call when code size is the priority
              !MF.getFunction()->optForMinSize())
       // "mov lr, pc; b _foo" to avoid confusing the RSP
@@ -2616,6 +2622,7 @@ SDValue
 ARMTargetLowering::LowerGlobalTLSAddressWindows(SDValue Op,
                                                 SelectionDAG &DAG) const {
   assert(Subtarget->isTargetWindows() && "Windows specific TLS lowering");
+
   SDValue Chain = DAG.getEntryNode();
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
   SDLoc DL(Op);
@@ -2657,8 +2664,17 @@ ARMTargetLowering::LowerGlobalTLSAddressWindows(SDValue Op,
                             DAG.getNode(ISD::ADD, DL, PtrVT, TLSArray, Slot),
                             MachinePointerInfo(), false, false, false, 0);
 
-  return DAG.getNode(ISD::ADD, DL, PtrVT, TLS,
-                     LowerGlobalAddressWindows(Op, DAG));
+  // Get the offset of the start of the .tls section (section base)
+  const auto *GA = cast<GlobalAddressSDNode>(Op);
+  auto *CPV = ARMConstantPoolConstant::Create(GA->getGlobal(), ARMCP::SECREL);
+  SDValue Offset =
+      DAG.getLoad(PtrVT, DL, Chain,
+                  DAG.getNode(ARMISD::Wrapper, DL, MVT::i32,
+                              DAG.getTargetConstantPool(CPV, PtrVT, 4)),
+                  MachinePointerInfo::getConstantPool(DAG.getMachineFunction()),
+                  false, false, false, 0);
+
+  return DAG.getNode(ISD::ADD, DL, PtrVT, TLS, Offset);
 }
 
 // Lower ISD::GlobalTLSAddress using the "general dynamic" model
@@ -2792,9 +2808,12 @@ SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
   SDLoc dl(Op);
   const GlobalValue *GV = cast<GlobalAddressSDNode>(Op)->getGlobal();
-  if (getTargetMachine().getRelocationModel() == Reloc::PIC_) {
+  const TargetMachine &TM = getTargetMachine();
+  Reloc::Model RM = TM.getRelocationModel();
+  const Triple &TargetTriple = TM.getTargetTriple();
+  if (RM == Reloc::PIC_) {
     bool UseGOT_PREL =
-        !(GV->hasHiddenVisibility() || GV->hasLocalLinkage());
+        !shouldAssumeDSOLocal(RM, TargetTriple, *GV->getParent(), GV);
 
     MachineFunction &MF = DAG.getMachineFunction();
     ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
@@ -5056,7 +5075,7 @@ SDValue ARMTargetLowering::LowerConstantFP(SDValue Op, SelectionDAG &DAG,
     return SDValue();
 
   // Try splatting with a VMOV.f32...
-  APFloat FPVal = CFP->getValueAPF();
+  const APFloat &FPVal = CFP->getValueAPF();
   int ImmVal = IsDouble ? ARM_AM::getFP64Imm(FPVal) : ARM_AM::getFP32Imm(FPVal);
 
   if (ImmVal != -1) {
@@ -10582,7 +10601,7 @@ static void computeKnownBits(SelectionDAG &DAG, SDValue Op, APInt &KnownZero,
     // The operand to BFI is already a mask suitable for removing the bits it
     // sets.
     ConstantSDNode *CI = cast<ConstantSDNode>(Op.getOperand(2));
-    APInt Mask = CI->getAPIntValue();
+    const APInt &Mask = CI->getAPIntValue();
     KnownZero &= Mask;
     KnownOne &= Mask;
     return;

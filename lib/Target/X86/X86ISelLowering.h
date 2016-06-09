@@ -213,6 +213,7 @@ namespace llvm {
       VGETMANT,
       // FP Scale.
       SCALEF,
+      SCALEFS,
 
       // Integer add/sub with unsigned saturation.
       ADDUS,
@@ -249,7 +250,8 @@ namespace llvm {
       /// Note that these typically require refinement
       /// in order to obtain suitable precision.
       FRSQRT, FRCP,
-
+      FRSQRTS, FRCPS,
+   
       // Thread Local Storage.
       TLSADDR,
 
@@ -269,6 +271,9 @@ namespace llvm {
 
       // SjLj exception handling longjmp.
       EH_SJLJ_LONGJMP,
+
+      // SjLj exception handling dispatch.
+      EH_SJLJ_SETUP_DISPATCH,
 
       /// Tail call return. See X86TargetLowering::LowerCall for
       /// the list of operands.
@@ -446,6 +451,8 @@ namespace llvm {
       VPCOM, VPCOMU,
       // XOP packed permute bytes.
       VPPERM,
+      // XOP two source permutation.
+      VPERMIL2,
 
       // Vector multiply packed unsigned doubleword integers.
       PMULUDQ,
@@ -962,7 +969,10 @@ namespace llvm {
     /// returns the address of that location. Otherwise, returns nullptr.
     Value *getIRStackGuard(IRBuilder<> &IRB) const override;
 
+    bool useLoadStackGuardNode() const override;
     void insertSSPDeclarations(Module &M) const override;
+    Value *getSDagStackGuard(const Module &M) const override;
+    Value *getSSPStackGuardCheck(const Module &M) const override;
 
     /// Return true if the target stores SafeStack pointer at a fixed offset in
     /// some non-standard address space, and populates the address space and
@@ -974,7 +984,6 @@ namespace llvm {
 
     bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const override;
 
-    bool useLoadStackGuardNode() const override;
     /// \brief Customize the preferred legalization strategy for certain types.
     LegalizeTypeAction getPreferredVectorAction(EVT VT) const override;
 
@@ -1091,6 +1100,7 @@ namespace llvm {
     SDValue LowerEH_RETURN(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerEH_SJLJ_SETJMP(SDValue Op, SelectionDAG &DAG) const;
     SDValue lowerEH_SJLJ_LONGJMP(SDValue Op, SelectionDAG &DAG) const;
+    SDValue lowerEH_SJLJ_SETUP_DISPATCH(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerINIT_TRAMPOLINE(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFLT_ROUNDS_(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerWin64_i128OP(SDValue Op, SelectionDAG &DAG) const;
@@ -1146,6 +1156,9 @@ namespace llvm {
 
     bool needsCmpXchgNb(Type *MemType) const;
 
+    void SetupEntryBlockForSjLj(MachineInstr *MI, MachineBasicBlock *MBB,
+                                MachineBasicBlock *DispatchBB, int FI) const;
+
     // Utility function to emit the low-level va_arg code for X86-64.
     MachineBasicBlock *EmitVAARG64WithCustomInserter(
                        MachineInstr *MI,
@@ -1161,9 +1174,6 @@ namespace llvm {
 
     MachineBasicBlock *EmitLoweredAtomicFP(MachineInstr *I,
                                            MachineBasicBlock *BB) const;
-
-    MachineBasicBlock *EmitLoweredWinAlloca(MachineInstr *MI,
-                                              MachineBasicBlock *BB) const;
 
     MachineBasicBlock *EmitLoweredCatchRet(MachineInstr *MI,
                                            MachineBasicBlock *BB) const;
@@ -1188,6 +1198,9 @@ namespace llvm {
 
     MachineBasicBlock *emitFMA3Instr(MachineInstr *MI,
                                      MachineBasicBlock *MBB) const;
+
+    MachineBasicBlock *EmitSjLjDispatchBlock(MachineInstr *MI,
+                                             MachineBasicBlock *MBB) const;
 
     /// Emit nodes that will be selected as "test Op0,Op0", or something
     /// equivalent, for use with the given x86 condition code.

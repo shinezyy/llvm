@@ -1615,7 +1615,7 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
       for (unsigned Idx = 0; Idx < NumElements; ++Idx) {
         if (ConstantInt *Elt =
                 dyn_cast<ConstantInt>(ConstArg->getAggregateElement(Idx))) {
-          APInt V = Elt->getValue();
+          const APInt &V = Elt->getValue();
           APInt V2 = APInt(V.getBitWidth(), 1) << V.countTrailingZeros();
           Elements.push_back(ConstantInt::get(EltTy, V2));
         } else {
@@ -1625,7 +1625,7 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
       ShadowMul = ConstantVector::get(Elements);
     } else {
       if (ConstantInt *Elt = dyn_cast<ConstantInt>(ConstArg)) {
-        APInt V = Elt->getValue();
+        const APInt &V = Elt->getValue();
         APInt V2 = APInt(V.getBitWidth(), 1) << V.countTrailingZeros();
         ShadowMul = ConstantInt::get(Ty, V2);
       } else {
@@ -2347,8 +2347,6 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     case llvm::Intrinsic::x86_sse_cvttss2si:
       handleVectorConvertIntrinsic(I, 1);
       break;
-    case llvm::Intrinsic::x86_sse2_cvtdq2pd:
-    case llvm::Intrinsic::x86_sse2_cvtps2pd:
     case llvm::Intrinsic::x86_sse_cvtps2pi:
     case llvm::Intrinsic::x86_sse_cvttps2pi:
       handleVectorConvertIntrinsic(I, 2);

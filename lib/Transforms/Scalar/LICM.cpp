@@ -63,6 +63,7 @@
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/SSAUpdater.h"
 #include <algorithm>
+#include <utility>
 using namespace llvm;
 
 #define DEBUG_TYPE "licm"
@@ -811,7 +812,7 @@ public:
                const AAMDNodes &AATags)
       : LoadAndStorePromoter(Insts, S), SomePtr(SP), PointerMustAliases(PMA),
         LoopExitBlocks(LEB), LoopInsertPts(LIP), PredCache(PIC), AST(ast),
-        LI(li), DL(dl), Alignment(alignment), AATags(AATags) {}
+        LI(li), DL(std::move(dl)), Alignment(alignment), AATags(AATags) {}
 
   bool isInstInList(Instruction *I,
                     const SmallVectorImpl<Instruction *> &) const override {
@@ -926,6 +927,16 @@ bool llvm::promoteLoopAccessesToScalars(
     return false;
 
   const DataLayout &MDL = Preheader->getModule()->getDataLayout();
+
+  if (SafetyInfo->MayThrow) {
+    // If a loop can throw, we have to insert a store along each unwind edge.
+    // That said, we can't actually make the unwind edge explicit. Therefore,
+    // we have to prove that the store is dead along the unwind edge.
+    //
+    // Currently, this code just special-cases alloca instructions.
+    if (!isa<AllocaInst>(GetUnderlyingObject(SomePtr, MDL)))
+      return false;
+  }
 
   // Check that all of the pointers in the alias set have the same type.  We
   // cannot (yet) promote a memory location that is loaded and stored in

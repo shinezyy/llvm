@@ -249,6 +249,14 @@ public:
     virtual void NodeUpdated(SDNode *N);
   };
 
+  struct DAGNodeDeletedListener : public DAGUpdateListener {
+    std::function<void(SDNode *, SDNode *)> Callback;
+    DAGNodeDeletedListener(SelectionDAG &DAG,
+                           std::function<void(SDNode *, SDNode *)> Callback)
+        : DAGUpdateListener(DAG), Callback(Callback) {}
+    void NodeDeleted(SDNode *N, SDNode *E) override { Callback(N, E); }
+  };
+
   /// When true, additional steps are taken to
   /// ensure that getConstant() and similar functions return DAG nodes that
   /// have legal types. This is important after type legalization since
@@ -1275,6 +1283,11 @@ public:
   /// target nodes to be understood.
   void computeKnownBits(SDValue Op, APInt &KnownZero, APInt &KnownOne,
                         unsigned Depth = 0) const;
+
+  /// Test if the given value is known to have exactly one bit set. This differs
+  /// from computeKnownBits in that it doesn't necessarily determine which bit
+  /// is set.
+  bool isKnownToBeAPowerOfTwo(SDValue Val) const;
 
   /// Return the number of times the sign bit of the
   /// register is replicated into the other bits.  We know that at least 1 bit

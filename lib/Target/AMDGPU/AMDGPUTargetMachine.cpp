@@ -59,6 +59,7 @@ extern "C" void LLVMInitializeAMDGPUTarget() {
   initializeSIInsertWaitsPass(*PR);
   initializeSIWholeQuadModePass(*PR);
   initializeSILowerControlFlowPass(*PR);
+  initializeSIDebuggerInsertNopsPass(*PR);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -77,18 +78,18 @@ static MachineSchedRegistry
 SISchedRegistry("si", "Run SI's custom scheduler",
                 createSIMachineScheduler);
 
-static std::string computeDataLayout(const Triple &TT) {
-  std::string Ret = "e-p:32:32";
-
-  if (TT.getArch() == Triple::amdgcn) {
-    // 32-bit private, local, and region pointers. 64-bit global and constant.
-    Ret += "-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32-p24:64:64";
+static StringRef computeDataLayout(const Triple &TT) {
+  if (TT.getArch() == Triple::r600) {
+    // 32-bit pointers.
+    return "e-p:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
+            "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
   }
 
-  Ret += "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256"
-         "-v512:512-v1024:1024-v2048:2048-n32:64";
-
-  return Ret;
+  // 32-bit private, local, and region pointers. 64-bit global, constant and
+  // flat.
+  return "e-p:32:32-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
+         "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
+         "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 }
 
 LLVM_READNONE
@@ -100,20 +101,25 @@ static StringRef getGPUOrDefault(const Triple &TT, StringRef GPU) {
   if (TT.getArch() == Triple::amdgcn)
     return (TT.getOS() == Triple::AMDHSA) ? "kaveri" : "tahiti";
 
-  return "";
+  return "r600";
+}
+
+static Reloc::Model getEffectiveRelocModel(Optional<Reloc::Model> RM) {
+  if (!RM.hasValue())
+    return Reloc::PIC_;
+  return *RM;
 }
 
 AMDGPUTargetMachine::AMDGPUTargetMachine(const Target &T, const Triple &TT,
                                          StringRef CPU, StringRef FS,
-                                         TargetOptions Options, Reloc::Model RM,
+                                         TargetOptions Options,
+                                         Optional<Reloc::Model> RM,
                                          CodeModel::Model CM,
                                          CodeGenOpt::Level OptLevel)
-    : LLVMTargetMachine(T, computeDataLayout(TT), TT,
-                        getGPUOrDefault(TT, CPU), FS, Options, RM, CM,
-                        OptLevel),
+    : LLVMTargetMachine(T, computeDataLayout(TT), TT, getGPUOrDefault(TT, CPU),
+                        FS, Options, getEffectiveRelocModel(RM), CM, OptLevel),
       TLOF(createTLOF(getTargetTriple())),
-      Subtarget(TT, getTargetCPU(), FS, *this),
-      IntrinsicInfo() {
+      Subtarget(TT, getTargetCPU(), FS, *this), IntrinsicInfo() {
   setRequiresStructuredCFG(true);
   initAsmInfo();
 }
@@ -126,7 +132,8 @@ AMDGPUTargetMachine::~AMDGPUTargetMachine() { }
 
 R600TargetMachine::R600TargetMachine(const Target &T, const Triple &TT,
                                      StringRef CPU, StringRef FS,
-                                     TargetOptions Options, Reloc::Model RM,
+                                     TargetOptions Options,
+                                     Optional<Reloc::Model> RM,
                                      CodeModel::Model CM, CodeGenOpt::Level OL)
     : AMDGPUTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL) {}
 
@@ -136,7 +143,8 @@ R600TargetMachine::R600TargetMachine(const Target &T, const Triple &TT,
 
 GCNTargetMachine::GCNTargetMachine(const Target &T, const Triple &TT,
                                    StringRef CPU, StringRef FS,
-                                   TargetOptions Options, Reloc::Model RM,
+                                   TargetOptions Options,
+                                   Optional<Reloc::Model> RM,
                                    CodeModel::Model CM, CodeGenOpt::Level OL)
     : AMDGPUTargetMachine(T, TT, CPU, FS, Options, RM, CM, OL) {}
 
@@ -217,6 +225,11 @@ TargetIRAnalysis AMDGPUTargetMachine::getTargetIRAnalysis() {
 }
 
 void AMDGPUPassConfig::addIRPasses() {
+  // There is no reason to run these.
+  disablePass(&StackMapLivenessID);
+  disablePass(&FuncletLayoutID);
+  disablePass(&PatchableFunctionID);
+
   // Function calls are not supported, so make sure we inline everything.
   addPass(createAMDGPUAlwaysInlinePass());
   addPass(createAlwaysInlinerPass());

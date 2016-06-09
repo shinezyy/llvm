@@ -1142,7 +1142,7 @@ SDValue SelectionDAG::getConstant(const ConstantInt &Val, SDLoc DL, EVT VT,
   else if (NewNodesMustHaveLegalTypes && VT.isVector() &&
            TLI->getTypeAction(*getContext(), EltVT) ==
            TargetLowering::TypeExpandInteger) {
-    APInt NewVal = Elt->getValue();
+    const APInt &NewVal = Elt->getValue();
     EVT ViaEltVT = TLI->getTypeToTransformTo(*getContext(), EltVT);
     unsigned ViaEltSizeInBits = ViaEltVT.getSizeInBits();
     unsigned ViaVecNumElts = VT.getSizeInBits() / ViaEltSizeInBits;
@@ -2465,6 +2465,12 @@ void SelectionDAG::computeKnownBits(SDValue Op, APInt &KnownZero,
     KnownOne = KnownOne.trunc(BitWidth);
     break;
   }
+  case ISD::BSWAP: {
+    computeKnownBits(Op.getOperand(0), KnownZero2, KnownOne2, Depth+1);
+    KnownZero = KnownZero2.byteSwap();
+    KnownOne = KnownOne2.byteSwap();
+    break;
+  }
   case ISD::SMIN:
   case ISD::SMAX:
   case ISD::UMIN:
@@ -2500,6 +2506,35 @@ void SelectionDAG::computeKnownBits(SDValue Op, APInt &KnownZero,
   }
 
   assert((KnownZero & KnownOne) == 0 && "Bits known to be one AND zero?");
+}
+
+bool SelectionDAG::isKnownToBeAPowerOfTwo(SDValue Val) const {
+  // A left-shift of a constant one will have exactly one bit set because
+  // shifting the bit off the end is undefined.
+  if (Val.getOpcode() == ISD::SHL) {
+    auto *C = dyn_cast<ConstantSDNode>(Val.getOperand(0));
+    if (C && C->getAPIntValue() == 1)
+      return true;
+  }
+
+  // Similarly, a logical right-shift of a constant sign-bit will have exactly
+  // one bit set.
+  if (Val.getOpcode() == ISD::SRL) {
+    auto *C = dyn_cast<ConstantSDNode>(Val.getOperand(0));
+    if (C && C->getAPIntValue().isSignBit())
+      return true;
+  }
+
+  // More could be done here, though the above checks are enough
+  // to handle some common cases.
+
+  // Fall back to computeKnownBits to catch other known cases.
+  EVT OpVT = Val.getValueType();
+  unsigned BitWidth = OpVT.getScalarType().getSizeInBits();
+  APInt KnownZero, KnownOne;
+  computeKnownBits(Val, KnownZero, KnownOne);
+  return (KnownZero.countPopulation() == BitWidth - 1) &&
+         (KnownOne.countPopulation() == 1);
 }
 
 /// ComputeNumSignBits - Return the number of times the sign bit of the
@@ -2836,8 +2871,7 @@ static SDValue FoldCONCAT_VECTORS(SDLoc DL, EVT VT, ArrayRef<SDValue> Ops,
     return Ops[0];
 
   // Concat of UNDEFs is UNDEF.
-  if (std::all_of(Ops.begin(), Ops.end(),
-                  [](SDValue Op) { return Op.isUndef(); }))
+  if (llvm::all_of(Ops, [](SDValue Op) { return Op.isUndef(); }))
     return DAG.getUNDEF(VT);
 
   // A CONCAT_VECTOR with all UNDEF/BUILD_VECTOR operands can be
@@ -3637,7 +3671,7 @@ SDValue SelectionDAG::getNode(unsigned Opcode, SDLoc DL, EVT VT, SDValue N1,
     };
 
     if (N1C) {
-      APInt Val = N1C->getAPIntValue();
+      const APInt &Val = N1C->getAPIntValue();
       return SignExtendInReg(Val);
     }
     if (ISD::isBuildVectorOfConstantSDNodes(N1.getNode())) {
@@ -7227,7 +7261,7 @@ BuildVectorSDNode::getConstantFPSplatPow2ToLog2Int(BitVector *UndefElements,
           dyn_cast_or_null<ConstantFPSDNode>(getSplatValue(UndefElements))) {
     bool IsExact;
     APSInt IntVal(BitWidth);
-    APFloat APF = CN->getValueAPF();
+    const APFloat &APF = CN->getValueAPF();
     if (APF.convertToInteger(IntVal, APFloat::rmTowardZero, &IsExact) !=
             APFloat::opOK ||
         !IsExact)

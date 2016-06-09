@@ -319,6 +319,14 @@ public:
     return false;
   }
 
+  /// Return true if it is safe to transform an integer-domain bitwise operation
+  /// into the equivalent floating-point operation. This should be set to true
+  /// if the target has IEEE-754-compliant fabs/fneg operations for the input
+  /// type.
+  virtual bool hasBitPreservingFPLogic(EVT VT) const {
+    return false;
+  }
+
   /// \brief Return if the target supports combining a
   /// chain like:
   /// \code
@@ -1070,14 +1078,20 @@ public:
   ///             LOAD_STACK_GUARD, or customize @llvm.stackguard().
   virtual Value *getIRStackGuard(IRBuilder<> &IRB) const;
 
-  /// Inserts necessary declarations for SSP purpose. Should be used only when
-  /// getIRStackGuard returns nullptr.
+  /// Inserts necessary declarations for SSP (stack protection) purpose.
+  /// Should be used only when getIRStackGuard returns nullptr.
   virtual void insertSSPDeclarations(Module &M) const;
 
   /// Return the variable that's previously inserted by insertSSPDeclarations,
   /// if any, otherwise return nullptr. Should be used only when
   /// getIRStackGuard returns nullptr.
   virtual Value *getSDagStackGuard(const Module &M) const;
+
+  /// If the target has a standard stack protection check function that
+  /// performs validation and error handling, returns the function. Otherwise,
+  /// returns nullptr. Must be previously inserted by insertSSPDeclarations.
+  /// Should be used only when getIRStackGuard returns nullptr.
+  virtual Value *getSSPStackGuardCheck(const Module &M) const;
 
   /// If the target has a standard location for the unsafe stack pointer,
   /// returns the address of that location. Otherwise, returns nullptr.
@@ -2520,7 +2534,10 @@ public:
       RetTy = ResultType;
 
       IsInReg = Call.paramHasAttr(0, Attribute::InReg);
-      DoesNotReturn = Call.doesNotReturn();
+      DoesNotReturn =
+          Call.doesNotReturn() ||
+          (!Call.isInvoke() &&
+           isa<UnreachableInst>(Call.getInstruction()->getNextNode()));
       IsVarArg = FTy->isVarArg();
       IsReturnValueUsed = !Call.getInstruction()->use_empty();
       RetSExt = Call.paramHasAttr(0, Attribute::SExt);

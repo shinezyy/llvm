@@ -65,6 +65,13 @@ static cl::opt<unsigned>
                             "loop-access analysis (default = 100)"),
                    cl::init(100));
 
+/// \brief Enable store-to-load forwarding conflict detection. This option can
+/// be disabled for correctness testing.
+static cl::opt<bool> EnableForwardingConflictDetection(
+    "store-to-load-forwarding-conflict-detection", cl::Hidden,
+    cl::desc("Enable conflict detection in loop-access analysis"),
+    cl::init(true));
+
 bool VectorizerParams::isInterleaveForced() {
   return ::VectorizationInterleave.getNumOccurrences() > 0;
 }
@@ -460,7 +467,7 @@ public:
   /// (i.e. the pointers have computable bounds).
   bool canCheckPtrAtRT(RuntimePointerChecking &RtCheck, ScalarEvolution *SE,
                        Loop *TheLoop, const ValueToValueMap &Strides,
-                       bool ShouldCheckStride = false);
+                       bool ShouldCheckWrap = false);
 
   /// \brief Goes over all memory accesses, checks whether a RT check is needed
   /// and builds sets of dependent accesses.
@@ -544,10 +551,21 @@ static bool hasComputableBounds(PredicatedScalarEvolution &PSE,
   return AR->isAffine();
 }
 
+/// \brief Check whether a pointer address cannot wrap.
+static bool isNoWrap(PredicatedScalarEvolution &PSE,
+                     const ValueToValueMap &Strides, Value *Ptr, Loop *L) {
+  const SCEV *PtrScev = PSE.getSCEV(Ptr);
+  if (PSE.getSE()->isLoopInvariant(PtrScev, L))
+    return true;
+
+  int Stride = getPtrStride(PSE, Ptr, L, Strides);
+  return Stride == 1;
+}
+
 bool AccessAnalysis::canCheckPtrAtRT(RuntimePointerChecking &RtCheck,
                                      ScalarEvolution *SE, Loop *TheLoop,
                                      const ValueToValueMap &StridesMap,
-                                     bool ShouldCheckStride) {
+                                     bool ShouldCheckWrap) {
   // Find pointers with computable bounds. We are going to use this information
   // to place a runtime bound check.
   bool CanDoRT = true;
@@ -582,8 +600,7 @@ bool AccessAnalysis::canCheckPtrAtRT(RuntimePointerChecking &RtCheck,
       if (hasComputableBounds(PSE, StridesMap, Ptr, TheLoop) &&
           // When we run after a failing dependency check we have to make sure
           // we don't have wrapping pointers.
-          (!ShouldCheckStride ||
-           getPtrStride(PSE, Ptr, TheLoop, StridesMap) == 1)) {
+          (!ShouldCheckWrap || isNoWrap(PSE, StridesMap, Ptr, TheLoop))) {
         // The id of the dependence set.
         unsigned DepId;
 
@@ -1074,28 +1091,34 @@ bool MemoryDepChecker::couldPreventStoreLoadForward(unsigned Distance,
   //   hence on your typical architecture store-load forwarding does not take
   //   place. Vectorizing in such cases does not make sense.
   // Store-load forwarding distance.
-  const unsigned NumCyclesForStoreLoadThroughMemory = 8*TypeByteSize;
+
+  // After this many iterations store-to-load forwarding conflicts should not
+  // cause any slowdowns.
+  const unsigned NumItersForStoreLoadThroughMemory = 8 * TypeByteSize;
   // Maximum vector factor.
   unsigned MaxVFWithoutSLForwardIssues = std::min(
       VectorizerParams::MaxVectorWidth * TypeByteSize, MaxSafeDepDistBytes);
 
-  for (unsigned vf = 2*TypeByteSize; vf <= MaxVFWithoutSLForwardIssues;
-       vf *= 2) {
-    if (Distance % vf && Distance / vf < NumCyclesForStoreLoadThroughMemory) {
-      MaxVFWithoutSLForwardIssues = (vf >>=1);
+  // Compute the smallest VF at which the store and load would be misaligned.
+  for (unsigned VF = 2 * TypeByteSize; VF <= MaxVFWithoutSLForwardIssues;
+       VF *= 2) {
+    // If the number of vector iteration between the store and the load are
+    // small we could incur conflicts.
+    if (Distance % VF && Distance / VF < NumItersForStoreLoadThroughMemory) {
+      MaxVFWithoutSLForwardIssues = (VF >>= 1);
       break;
     }
   }
 
-  if (MaxVFWithoutSLForwardIssues< 2*TypeByteSize) {
-    DEBUG(dbgs() << "LAA: Distance " << Distance <<
-          " that could cause a store-load forwarding conflict\n");
+  if (MaxVFWithoutSLForwardIssues < 2 * TypeByteSize) {
+    DEBUG(dbgs() << "LAA: Distance " << Distance
+                 << " that could cause a store-load forwarding conflict\n");
     return true;
   }
 
   if (MaxVFWithoutSLForwardIssues < MaxSafeDepDistBytes &&
       MaxVFWithoutSLForwardIssues !=
-      VectorizerParams::MaxVectorWidth * TypeByteSize)
+          VectorizerParams::MaxVectorWidth * TypeByteSize)
     MaxSafeDepDistBytes = MaxVFWithoutSLForwardIssues;
   return false;
 }
@@ -1199,11 +1222,21 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
   auto &DL = InnermostLoop->getHeader()->getModule()->getDataLayout();
   unsigned TypeByteSize = DL.getTypeAllocSize(ATy);
 
-  // Negative distances are not plausible dependencies.
   const APInt &Val = C->getAPInt();
+  int64_t Distance = Val.getSExtValue();
+  unsigned Stride = std::abs(StrideAPtr);
+
+  // Attempt to prove strided accesses independent.
+  if (std::abs(Distance) > 0 && Stride > 1 && ATy == BTy &&
+      areStridedAccessesIndependent(std::abs(Distance), Stride, TypeByteSize)) {
+    DEBUG(dbgs() << "LAA: Strided accesses are independent\n");
+    return Dependence::NoDep;
+  }
+
+  // Negative distances are not plausible dependencies.
   if (Val.isNegative()) {
     bool IsTrueDataDependence = (AIsWrite && !BIsWrite);
-    if (IsTrueDataDependence &&
+    if (IsTrueDataDependence && EnableForwardingConflictDetection &&
         (couldPreventStoreLoadForward(Val.abs().getZExtValue(), TypeByteSize) ||
          ATy != BTy)) {
       DEBUG(dbgs() << "LAA: Forward but may prevent st->ld forwarding\n");
@@ -1229,15 +1262,6 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
     DEBUG(dbgs() <<
           "LAA: ReadWrite-Write positive dependency with different types\n");
     return Dependence::Unknown;
-  }
-
-  unsigned Distance = (unsigned) Val.getZExtValue();
-
-  unsigned Stride = std::abs(StrideAPtr);
-  if (Stride > 1 &&
-      areStridedAccessesIndependent(Distance, Stride, TypeByteSize)) {
-    DEBUG(dbgs() << "LAA: Strided accesses are independent\n");
-    return Dependence::NoDep;
   }
 
   // Bail out early if passed-in parameters make vectorization not feasible.
@@ -1309,7 +1333,7 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
       Distance < MaxSafeDepDistBytes ? Distance : MaxSafeDepDistBytes;
 
   bool IsTrueDataDependence = (!AIsWrite && BIsWrite);
-  if (IsTrueDataDependence &&
+  if (IsTrueDataDependence && EnableForwardingConflictDetection &&
       couldPreventStoreLoadForward(Distance, TypeByteSize))
     return Dependence::BackwardVectorizableButPreventsForwarding;
 
@@ -1466,12 +1490,11 @@ bool LoopAccessInfo::canAnalyzeLoop() {
 
 void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
 
-  typedef SmallVector<Value*, 16> ValueVector;
   typedef SmallPtrSet<Value*, 16> ValueSet;
 
-  // Holds the Load and Store *instructions*.
-  ValueVector Loads;
-  ValueVector Stores;
+  // Holds the Load and Store instructions.
+  SmallVector<LoadInst *, 16> Loads;
+  SmallVector<StoreInst *, 16> Stores;
 
   // Holds all the different accesses in the loop.
   unsigned NumReads = 0;
@@ -1566,10 +1589,8 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
   // writes and between reads and writes, but not between reads and reads.
   ValueSet Seen;
 
-  ValueVector::iterator I, IE;
-  for (I = Stores.begin(), IE = Stores.end(); I != IE; ++I) {
-    StoreInst *ST = cast<StoreInst>(*I);
-    Value* Ptr = ST->getPointerOperand();
+  for (StoreInst *ST : Stores) {
+    Value *Ptr = ST->getPointerOperand();
     // Check for store to loop invariant address.
     StoreToLoopInvariantAddress |= isUniform(Ptr);
     // If we did *not* see this pointer before, insert it to  the read-write
@@ -1596,9 +1617,8 @@ void LoopAccessInfo::analyzeLoop(const ValueToValueMap &Strides) {
     return;
   }
 
-  for (I = Loads.begin(), IE = Loads.end(); I != IE; ++I) {
-    LoadInst *LD = cast<LoadInst>(*I);
-    Value* Ptr = LD->getPointerOperand();
+  for (LoadInst *LD : Loads) {
+    Value *Ptr = LD->getPointerOperand();
     // If we did *not* see this pointer before, insert it to the
     // read list. If we *did* see it before, then it is already in
     // the read-write list. This allows us to vectorize expressions

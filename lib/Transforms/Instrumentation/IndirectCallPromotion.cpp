@@ -31,6 +31,7 @@
 #include "llvm/ProfileData/InstrProfReader.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Instrumentation.h"
+#include "llvm/Transforms/PGOInstrumentation.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <string>
 #include <utility>
@@ -38,7 +39,7 @@
 
 using namespace llvm;
 
-#define DEBUG_TYPE "icall-promotion"
+#define DEBUG_TYPE "pgo-icall-prom"
 
 STATISTIC(NumOfPGOICallPromotion, "Number of indirect call promotions.");
 STATISTIC(NumOfPGOICallsites, "Number of indirect call candidate sites.");
@@ -144,6 +145,7 @@ ModulePass *llvm::createPGOIndirectCallPromotionLegacyPass(bool InLTO) {
   return new PGOIndirectCallPromotionLegacyPass(InLTO);
 }
 
+namespace {
 // The class for main data structure to promote indirect calls to conditional
 // direct calls.
 class ICallPromotionFunc {
@@ -234,6 +236,7 @@ public:
   }
   bool processFunction();
 };
+} // end anonymous namespace
 
 bool ICallPromotionFunc::isPromotionProfitable(uint64_t Count,
                                                uint64_t TotalCount) {
@@ -330,7 +333,7 @@ ICallPromotionFunc::getPromotionCandidatesForCallSite(
       const char *Reason = StatusToString(Status);
       DEBUG(dbgs() << " Not promote: " << Reason << "\n");
       emitOptimizationRemarkMissed(
-          F.getContext(), "PGOIndirectCallPromotion", F, Inst->getDebugLoc(),
+          F.getContext(), "pgo-icall-prom", F, Inst->getDebugLoc(),
           Twine("Cannot promote indirect call to ") +
               (TargetFuncName.empty() ? Twine(Target) : Twine(TargetFuncName)) +
               Twine(" with count of ") + Twine(Count) + ": " + Reason);
@@ -604,7 +607,7 @@ void ICallPromotionFunc::promote(Instruction *Inst, Function *DirectCallee,
   DEBUG(dbgs() << *BB << *DirectCallBB << *IndirectCallBB << *MergeBB << "\n");
 
   emitOptimizationRemark(
-      F.getContext(), "PGOIndirectCallPromotion", F, Inst->getDebugLoc(),
+      F.getContext(), "pgo-icall-prom", F, Inst->getDebugLoc(),
       Twine("Promote indirect call to ") + DirectCallee->getName() +
           " with count " + Twine(Count) + " out of " + Twine(TotalCount));
 }
@@ -688,6 +691,12 @@ static bool promoteIndirectCalls(Module &M, bool InLTO) {
 
 bool PGOIndirectCallPromotionLegacyPass::runOnModule(Module &M) {
   // Command-line option has the priority for InLTO.
-  InLTO |= ICPLTOMode;
-  return promoteIndirectCalls(M, InLTO);
+  return promoteIndirectCalls(M, InLTO | ICPLTOMode);
+}
+
+PreservedAnalyses PGOIndirectCallPromotion::run(Module &M, AnalysisManager<Module> &AM) {
+  if (!promoteIndirectCalls(M, InLTO | ICPLTOMode))
+    return PreservedAnalyses::all();
+
+  return PreservedAnalyses::none();
 }
