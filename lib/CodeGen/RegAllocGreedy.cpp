@@ -2627,6 +2627,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
       MBBI != MBBE; ++MBBI) {
     //DEBUG(MBBI->print(dbgs(), Indexes)); 
+    DEBUG(dbgs() << "Freq: " << MBFI->getBlockFreq(&*MBBI).getFrequency() << "\n");
     if (numHFBB < numHFBBLimit) {
       HFBBs.push_back(&*MBBI);
       ++numHFBB;
@@ -2641,9 +2642,14 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
         min_idx = i;
       }
     }
-    if (MBFI->getBlockFreq(&*MBBI) < min) {
+    if (MBFI->getBlockFreq(&*MBBI) > min) {
       HFBBs[min_idx] = &*MBBI;
     }
+  }
+
+  for (unsigned i = 0; i < numHFBBLimit; i++) {
+    DEBUG(HFBBs[i]->print(dbgs(), Indexes)); 
+    DEBUG(dbgs() << "Frep" << MBFI->getBlockFreq(HFBBs[i]).getFrequency() << "\n");
   }
 
 
