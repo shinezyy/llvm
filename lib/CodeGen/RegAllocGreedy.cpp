@@ -2651,7 +2651,8 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   std::set<unsigned> written_pregs;
   for (unsigned i = 0; i < numHFBBLimit; i++) {
     DEBUG(HFBBs[i]->print(dbgs(), Indexes)); 
-    DEBUG(dbgs() << "Frep" << MBFI->getBlockFreq(HFBBs[i]).getFrequency() << "\n");
+    DEBUG(dbgs() << "Freq: " 
+        << MBFI->getBlockFreq(HFBBs[i]).getFrequency() << "\n");
     for (MachineBasicBlock::instr_iterator MII = HFBBs[i]->instr_begin(),
         MIE = HFBBs[i]->instr_end(); MII != MIE;) {
       MachineInstr *MI = &*MII;
@@ -2662,7 +2663,17 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
         if (!MO.isReg()) {
           continue;
         }
-        unsigned PhysReg = VRM->getPhys(MO.getReg());
+        unsigned Reg = MO.getReg();
+        unsigned PhysReg;
+        if (TRI->isVirtualRegister(Reg)) {
+          PhysReg = VRM->getPhys(Reg);
+        }
+        else if (TRI->isPhysicalRegister(Reg)) {
+          PhysReg = Reg;
+        }
+        else {
+          continue;
+        }
         if (MO.isDef() && PhysReg != VirtRegMap::NO_PHYS_REG) {
           written_pregs.insert(PhysReg);
         }
@@ -2670,9 +2681,9 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
     }
   }
   for (std::set<unsigned>::iterator it = written_pregs.begin(),
-      it_end = written_pregs.begin(); it != it_end; it++) {
-    DEBUG(dbgs() << "Physical Register" << PrintReg(*it, TRI)
-        << "was written" << "in hotspot\n");
+      it_end = written_pregs.end(); it != it_end; it++) {
+    DEBUG(dbgs() << "Physical Register " << PrintReg(*it, TRI)
+        << " was written" << "in hotspot\n");
   }
   DEBUG(dbgs() << "YY: found writes in HFBBs\n");
 
