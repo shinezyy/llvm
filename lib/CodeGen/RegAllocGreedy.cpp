@@ -2628,20 +2628,21 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
       MBBI != MBBE; ++MBBI) {
     //DEBUG(MBBI->print(dbgs(), Indexes)); 
     if (numHFBB < numHFBBLimit) {
-      HFBBs.push_back(MBBI);
+      HFBBs.push_back(&*MBBI);
       ++numHFBB;
       continue;
     }
 
-    unsigned min = 0xffffffff, min_idx = 0;
-    for (unsigned i = 0; i < numHFBBLimit; ++i) {
+    BlockFrequency min = MBFI->getBlockFreq(HFBBs[0]);
+    unsigned min_idx = 0;
+    for (unsigned i = 1; i < numHFBBLimit; ++i) {
       if (MBFI->getBlockFreq(HFBBs[i]) < min) {
         min = MBFI->getBlockFreq(HFBBs[i]);
         min_idx = i;
       }
     }
-    if (MBFI->getBlockFreq(MBBI) < min) {
-      HFBBs[min_idx] = MBBI;
+    if (MBFI->getBlockFreq(&*MBBI) < min) {
+      HFBBs[min_idx] = &*MBBI;
     }
   }
 
