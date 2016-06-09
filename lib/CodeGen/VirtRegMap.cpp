@@ -233,6 +233,10 @@ bool VirtRegRewriter::runOnMachineFunction(MachineFunction &fn) {
   // Write out new DBG_VALUE instructions.
   getAnalysis<LiveDebugVariables>().emitDebugValues(VRM);
 
+  DEBUG(dbgs() << "YY: is to print rewritten register mapping\n");
+  DEBUG(VRM->dump());
+  DEBUG(dbgs() << "YY: printed rewritten register mapping\n");
+
   // All machine operands and other references to virtual registers have been
   // replaced. Remove the virtual registers and release all the transient data.
   VRM->clearAllVirt();

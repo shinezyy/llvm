@@ -2608,9 +2608,45 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   GlobalCand.resize(32);  // This will grow as needed.
   SetOfBrokenHints.clear();
 
+  DEBUG(dbgs() << "YY: is going to allocate physical registers\n");
   allocatePhysRegs();
+  DEBUG(dbgs() << "YY: finished allocating physical registers\n");
   tryHintsRecoloring();
+
   postOptimization();
+
+  DEBUG(dbgs() << "YY: is going to print final mapping inside Greeedy\n");
+  DEBUG(VRM->print(dbgs()));
+  DEBUG(dbgs() << "YY: printed final mapping inside Greedy\n");
+
+  DEBUG(dbgs() << "YY: is going to find HFBB\n");
+
+  std::vector<MachineBasicBlock *> HFBBs;
+  unsigned numHFBBLimit = 5;
+  unsigned numHFBB = 0; // number of high-frequency BBs
+  for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
+      MBBI != MBBE; ++MBBI) {
+    //DEBUG(MBBI->print(dbgs(), Indexes)); 
+    if (numHFBB < numHFBBLimit) {
+      HFBBs.push_back(MBBI);
+      ++numHFBB;
+      continue;
+    }
+
+    unsigned min = 0xffffffff, min_idx = 0;
+    for (unsigned i = 0; i < numHFBBLimit; ++i) {
+      if (MBFI->getBlockFreq(HFBBs[i]) < min) {
+        min = MBFI->getBlockFreq(HFBBs[i]);
+        min_idx = i;
+      }
+    }
+    if (MBFI->getBlockFreq(MBBI) < min) {
+      HFBBs[min_idx] = MBBI;
+    }
+  }
+
+
+  DEBUG(dbgs() << "YY: found HFBB\n");
 
   releaseMemory();
   return true;
