@@ -437,7 +437,7 @@ private:
   }
 
   unsigned findSramSubstitude(unsigned physReg) {
-    switch (physreg) {
+    switch (physReg) {
       case 1: 
       case 8:
       case 9:
@@ -448,7 +448,7 @@ private:
       default: return 0;
    }
   }  
-  void remapPhysReg(MachineFunction& mf, unsigned preg0, unsigned preg1);
+  void remapPhysReg(MachineFunction *MF, unsigned preg0, unsigned preg1);
 };
 
 } // end anonymous namespace
@@ -2729,7 +2729,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   for (std::set<unsigned>::iterator it = written_pregs.begin(),
       it_end = written_pregs.end(); it != it_end; it++) {
     if (isNvm(*it) && (sram_subst = getUnusedSramReg())) { // remappable 
-      remapPhysReg(*it, sram_subst);
+      remapPhysReg(MF, *it, sram_subst);
     }
   }
   DEBUG(dbgs() << "YY: remap physical regsiters\n");
@@ -2738,13 +2738,14 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   return true;
 }
 
-void RAGreedy::remapPhysReg(MachineFunction* MF, unsigned reg0, unsigned reg1) {
-  MF = &mf;
+void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
   TRI = MF->getSubtarget().getRegisterInfo();
   for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
       MBBI != MBBE; ++MBBI) {
     for (MachineBasicBlock::instr_iterator MII = MBBI->instr_begin(),
         MIE = MBBI->instr_end(); MII != MIE;) {
+      MachineInstr *MI = &*MII;
+      ++MII;
       for (MachineInstr::mop_iterator MOI = MI->operands_begin(),
           MOE = MI->operands_end(); MOI != MOE; ++MOI) {
         MachineOperand &MO = *MOI;
