@@ -444,8 +444,16 @@ private:
       case 313:
       case 314:
       case 315:
-      case 316: return getUnusedSramReg();
-      default: return 0;
+      case 316: 
+        {
+          DEBUG(dbgs() << "is to look for substitution" << "\n");
+          return getUnusedSramReg();
+        }
+      default:
+        {
+          DEBUG(dbgs() << "will not look for substitution" << "\n");
+          return 0;
+        }
    }
   }  
   void remapPhysReg(MachineFunction *MF, unsigned preg0, unsigned preg1);
@@ -2730,9 +2738,14 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 
   std::set<unsigned> SramSet(SramRegisters, SramRegisters + 8);
   unsigned sram_subst = 0;
+  // reinit SRAM usage
+  for (unsigned i = 0; i < 8; ++i) {
+    SramRegUsage[i] = 0;
+  }
   for (std::set<unsigned>::iterator it = written_pregs.begin(),
       it_end = written_pregs.end(); it != it_end; it++) {
-    if (isNvm(*it) && (sram_subst = getUnusedSramReg())) { // remappable 
+    if (isNvm(*it) && (sram_subst = findSramSubstitude(*it))) { // remappable 
+      DEBUG(dbgs() << "it is NVM: " << isNvm(*it) << "\n");
       DEBUG(dbgs() << "YY: is to remap physical regsiter: substitute "
           << PrintReg(*it, TRI) << " with " << PrintReg(sram_subst, TRI)
           << "\n");
