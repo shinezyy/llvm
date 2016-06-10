@@ -2745,6 +2745,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   return true;
 }
 
+/*
 void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
   TRI = MF->getSubtarget().getRegisterInfo();
   for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
@@ -2760,21 +2761,60 @@ void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
           continue;
         }
         unsigned Reg = MO.getReg();
-        DEBUG(dbgs() << "Virtual Register: " << Reg << "\n");
         unsigned PhysReg;
         if (TRI->isVirtualRegister(Reg))
           PhysReg = VRM->getPhys(Reg);
         else
           continue;
+        DEBUG(dbgs() << "Virtual Register: " << Reg << "\n");
         if (PhysReg == reg0) {
+          DEBUG(dbgs() << "YY: is to reassign physical regsiter "
+              << PrintReg(reg1, TRI) << " to " << PrintReg(Reg, TRI)
+              << " instead of " << PrintReg(PhysReg, TRI)
+              << "\n");
           VRM->reAssignVirt2Phys(Reg, reg1);
           assert(VRM->getPhys(Reg) == reg1 && "reAssigning failed");
         }
         else if (PhysReg == reg1) {
           VRM->reAssignVirt2Phys(Reg, reg0);
           assert(VRM->getPhys(Reg) == reg0 && "reAssigning failed");
+          DEBUG(dbgs() << "YY: is to reassign physical regsiter "
+              << PrintReg(reg0, TRI) << " to " << PrintReg(Reg, TRI)
+              << " instead of " << PrintReg(PhysReg, TRI)
+              << "\n");
         }
       }
+    }
+  }
+}
+*/
+
+void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
+  for (unsigned i = 0, e = MRI->getNumVirtRegs(); i!=e; ++i) {
+    unsigned Reg = TargetRegisterInfo::index2VirtReg(i);
+    unsigned PhysReg = 0;
+    if (TRI->isVirtualRegister(Reg))
+      PhysReg = VRM->getPhys(Reg);
+    else {
+      DEBUG(dbgs() << "NOT physical register!! [dangerous]\n");
+      continue;
+    }
+    DEBUG(dbgs() << "Virtual Register: " << Reg << "\n");
+    if (PhysReg == reg0) {
+      VRM->reAssignVirt2Phys(Reg, reg1);
+      assert(VRM->getPhys(Reg) == reg1 && "reAssigning failed");
+      DEBUG(dbgs() << "YY: is to reassign physical regsiter "
+          << PrintReg(reg1, TRI) << " to " << PrintReg(Reg, TRI)
+          << " instead of " << PrintReg(PhysReg, TRI)
+          << "\n");
+    }
+    else if (PhysReg == reg1) {
+      VRM->reAssignVirt2Phys(Reg, reg0);
+      assert(VRM->getPhys(Reg) == reg0 && "reAssigning failed");
+      DEBUG(dbgs() << "YY: is to reassign physical regsiter "
+          << PrintReg(reg0, TRI) << " to " << PrintReg(Reg, TRI)
+          << " instead of " << PrintReg(PhysReg, TRI)
+          << "\n");
     }
   }
 }
