@@ -418,7 +418,7 @@ private:
   bool isUnusedCalleeSavedReg(unsigned PhysReg) const;
 
   // ZYY: my functions:
-  unsigned SramRegisters[8] = {22, 23, 24, 25, 317, 318, 319, 320};
+  unsigned SramRegisters[8] = {66, 67, 68, 69, 74, 75, 76, 77};
   unsigned SramRegUsage[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
   bool isNvm(unsigned physReg) {
@@ -428,7 +428,7 @@ private:
 
   unsigned getUnusedSramReg() { // for temporaries only
     for (unsigned i = 4; i < 8; ++i) {
-      if (SramRegUsage[i] == 0) {
+      if (SramRegUsage[i] == 0 && !MRI->isReserved(SramRegisters[i])) {
         SramRegUsage[i] = 1;
         return SramRegisters[i];
       }
@@ -437,14 +437,15 @@ private:
   }
 
   unsigned findSramSubstitude(unsigned physReg) {
+    if (MRI->isReserved(physReg)) {
+      DEBUG(dbgs() << "will not look for substitution" << "\n");
+      return 0;
+    }
     switch (physReg) {
-      case 1: 
-      case 311:
-      case 312:
-      case 313:
-      case 314:
-      case 315:
-      case 316: 
+      case 70:
+      case 71:
+      case 72:
+      case 73:
         {
           DEBUG(dbgs() << "is to look for substitution" << "\n");
           return getUnusedSramReg();
@@ -2749,7 +2750,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
       DEBUG(dbgs() << "YY: is to remap physical regsiter: substitute "
           << PrintReg(*it, TRI) << " with " << PrintReg(sram_subst, TRI)
           << "\n");
-      remapPhysReg(MF, *it, sram_subst);
+      // remapPhysReg(MF, *it, sram_subst);
       DEBUG(dbgs() << "YY: remap physical regsiters\n");
     }
   }
@@ -2757,50 +2758,6 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   releaseMemory();
   return true;
 }
-
-/*
-void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
-  TRI = MF->getSubtarget().getRegisterInfo();
-  for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
-      MBBI != MBBE; ++MBBI) {
-    for (MachineBasicBlock::instr_iterator MII = MBBI->instr_begin(),
-        MIE = MBBI->instr_end(); MII != MIE;) {
-      MachineInstr *MI = &*MII;
-      ++MII;
-      for (MachineInstr::mop_iterator MOI = MI->operands_begin(),
-          MOE = MI->operands_end(); MOI != MOE; ++MOI) {
-        MachineOperand &MO = *MOI;
-        if (!MO.isReg()) {
-          continue;
-        }
-        unsigned Reg = MO.getReg();
-        unsigned PhysReg;
-        if (TRI->isVirtualRegister(Reg))
-          PhysReg = VRM->getPhys(Reg);
-        else
-          continue;
-        DEBUG(dbgs() << "Virtual Register: " << Reg << "\n");
-        if (PhysReg == reg0) {
-          DEBUG(dbgs() << "YY: is to reassign physical regsiter "
-              << PrintReg(reg1, TRI) << " to " << PrintReg(Reg, TRI)
-              << " instead of " << PrintReg(PhysReg, TRI)
-              << "\n");
-          VRM->reAssignVirt2Phys(Reg, reg1);
-          assert(VRM->getPhys(Reg) == reg1 && "reAssigning failed");
-        }
-        else if (PhysReg == reg1) {
-          VRM->reAssignVirt2Phys(Reg, reg0);
-          assert(VRM->getPhys(Reg) == reg0 && "reAssigning failed");
-          DEBUG(dbgs() << "YY: is to reassign physical regsiter "
-              << PrintReg(reg0, TRI) << " to " << PrintReg(Reg, TRI)
-              << " instead of " << PrintReg(PhysReg, TRI)
-              << "\n");
-        }
-      }
-    }
-  }
-}
-*/
 
 void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
   for (unsigned i = 0, e = MRI->getNumVirtRegs(); i!=e; ++i) {
