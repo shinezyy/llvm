@@ -2750,7 +2750,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
       DEBUG(dbgs() << "YY: is to remap physical regsiter: substitute "
           << PrintReg(*it, TRI) << " with " << PrintReg(sram_subst, TRI)
           << "\n");
-      // remapPhysReg(MF, *it, sram_subst);
+      remapPhysReg(MF, *it, sram_subst);
       DEBUG(dbgs() << "YY: remap physical regsiters\n");
     }
   }
