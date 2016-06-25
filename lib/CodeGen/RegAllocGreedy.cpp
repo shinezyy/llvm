@@ -2687,45 +2687,50 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
         unsigned PhysReg;
         if (TRI->isVirtualRegister(Reg)) {
           PhysReg = VRM->getPhys(Reg);
-          DEBUG(dbgs() << "Virtual Register " << Reg
-              << " has been assigned to Physical Register " << PhysReg << "\n" );
+          DEBUG(dbgs() << PrintReg(Reg, TRI)
+              << " has been assigned to " << PrintReg(PhysReg, TRI) << "\n" );
         }
         else {
           continue;
         }
         if (MO.isDef() && PhysReg != VirtRegMap::NO_PHYS_REG) {
-          DEBUG(dbgs() << "insert physical register " << PhysReg
-              << " to written set\n");
+          DEBUG(dbgs() << "insert  " << PrintReg(Reg, TRI) << " to written set.\n");
           written_pregs.insert(Reg); // insert **virtual** reg!
         }
       }
     }
+
+    DEBUG(dbgs() << "ZYY: is going to reassign\n");
     for (std::set<unsigned>::iterator it = written_pregs.begin(),
         it_end = written_pregs.end(); it != it_end; it++) {
-
       unsigned i ;
       for (i = 0; i < numSramReg; ++i) {
         if (canAssign(SramRegisters[i], *it)) {
           // remap it
           DEBUG(dbgs() << "is about to reassign " << PrintReg(*it, TRI)
-              << "to " << PrintReg(SramRegisters[i], TRI) <<"\n");
+              << " to " << PrintReg(SramRegisters[i], TRI) <<"\n");
           VRM->reAssignVirt2Phys(*it, SramRegisters[i]);
           std::vector<const LiveRange::Segment *> *preg_range = assignedRanges[i];
           LiveRange::Segments &vreg_segs = LIS->getInterval(*it).segments; 
           for (unsigned j = 0; j < vreg_segs.size(); j++) {
-            preg_range->push_back(&vreg_segs[i]);
+            auto ptr = &vreg_segs[j];
+            preg_range->push_back(ptr);
           }
           break;
         }
       }
 
       if (i == numSramReg) {
-        DEBUG(dbgs() << PrintReg(*it, TRI) << " can not be reassign to SRAM reg\n");
+        DEBUG(dbgs() << PrintReg(*it, TRI) << " can not be reassigned to SRAM reg\n");
+      }
+      else {
+        DEBUG(dbgs() << PrintReg(*it, TRI) << " has been reassigned to SRAM reg\n");
       }
     }
+    DEBUG(dbgs() << "ZYY: finished reassignment\n");
+
     written_pregs.clear();
   }
-  DEBUG(dbgs() << "YY: found writes in HFBBs\n");
 
   releaseMemory();
   return true;
