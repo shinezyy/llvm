@@ -2612,6 +2612,34 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   tryHintsRecoloring();
   postOptimization();
 
+  DEBUG(dbgs() << "YY: is going to find HFBB\n");
+  std::vector<MachineBasicBlock *> HFBBs;
+  unsigned numHFBBLimit = 5;
+  unsigned numHFBB = 0; // number of high-frequency BBs
+  for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
+      MBBI != MBBE; ++MBBI) {
+    //DEBUG(MBBI->print(dbgs(), Indexes)); 
+    DEBUG(dbgs() << "Freq: " << MBFI->getBlockFreq(&*MBBI).getFrequency() << "\n");
+    if (numHFBB < numHFBBLimit) {
+      HFBBs.push_back(&*MBBI);
+      ++numHFBB;
+      continue;
+    }
+
+    BlockFrequency min = MBFI->getBlockFreq(HFBBs[0]);
+    unsigned min_idx = 0;
+    for (unsigned i = 1; i < numHFBBLimit; ++i) {
+      if (MBFI->getBlockFreq(HFBBs[i]) < min) {
+        min = MBFI->getBlockFreq(HFBBs[i]);
+        min_idx = i;
+      }
+    }
+    if (MBFI->getBlockFreq(&*MBBI) > min) {
+      HFBBs[min_idx] = &*MBBI;
+    }
+  }
+  DEBUG(dbgs() << "YY: found HFBB\n");
+
   releaseMemory();
   return true;
 }
