@@ -2731,7 +2731,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 
     written_pregs.clear();
   }
-
+  MRI->refreezeReservedRegs(VRM->getMachineFunction());
   releaseMemory();
   return true;
 }

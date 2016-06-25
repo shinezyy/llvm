@@ -117,6 +117,7 @@ public:
                                              CallingConv::ID) const;
 
   BitVector getReservedRegs(const MachineFunction &MF) const override;
+  BitVector getReservedRegs(const MachineFunction &MF, bool enable_sram) const override;
 
   const TargetRegisterClass *
   getPointerRegClass(const MachineFunction &MF,

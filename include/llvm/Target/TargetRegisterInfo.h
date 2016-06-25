@@ -17,6 +17,7 @@
 #define LLVM_TARGET_TARGETREGISTERINFO_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/IR/CallingConv.h"
@@ -27,7 +28,7 @@
 
 namespace llvm {
 
-class BitVector;
+// class BitVector;
 class MachineFunction;
 class RegScavenger;
 template<class T> class SmallVectorImpl;
@@ -488,6 +489,17 @@ public:
   /// considered unavailable at all times, e.g. SP, RA. This is
   /// used by register scavenger to determine what registers are free.
   virtual BitVector getReservedRegs(const MachineFunction &MF) const = 0;
+
+  virtual BitVector getReservedRegs(const MachineFunction &MF, bool enable_sram) const {
+    if (enable_sram) {
+      BitVector resv(0);
+      return resv;
+    }
+    else {
+      BitVector resv(1);
+      return resv;
+    }
+  }
 
   /// Prior to adding the live-out mask to a stackmap or patchpoint
   /// instruction, provide the target the opportunity to adjust it (mainly to

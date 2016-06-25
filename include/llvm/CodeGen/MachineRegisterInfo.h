@@ -742,6 +742,7 @@ public:
   /// freezeReservedRegs - Called by the register allocator to freeze the set
   /// of reserved registers before allocation begins.
   void freezeReservedRegs(const MachineFunction&);
+  void refreezeReservedRegs(const MachineFunction&);
 
   /// reservedRegsFrozen - Returns true after freezeReservedRegs() was called
   /// to ensure the set of reserved registers stays constant.

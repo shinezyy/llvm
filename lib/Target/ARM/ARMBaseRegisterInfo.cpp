@@ -189,6 +189,41 @@ getReservedRegs(const MachineFunction &MF) const {
   return Reserved;
 }
 
+BitVector ARMBaseRegisterInfo::
+getReservedRegs(const MachineFunction &MF, bool enable_sram) const {
+  const ARMSubtarget &STI = MF.getSubtarget<ARMSubtarget>();
+  const ARMFrameLowering *TFI = getFrameLowering(MF);
+
+  // FIXME: avoid re-calculating this every time.
+  BitVector Reserved(getNumRegs());
+  Reserved.set(ARM::SP);
+  Reserved.set(ARM::PC);
+  Reserved.set(ARM::FPSCR);
+  Reserved.set(ARM::APSR_NZCV);
+  if (!enable_sram) {
+    Reserved.set(ARM::R4);
+    Reserved.set(ARM::R5);
+  }
+  if (TFI->hasFP(MF))
+    Reserved.set(getFramePointerReg(STI));
+  if (hasBasePointer(MF))
+    Reserved.set(BasePtr);
+  // Some targets reserve R9.
+  if (STI.isR9Reserved())
+    Reserved.set(ARM::R9);
+  // Reserve D16-D31 if the subtarget doesn't support them.
+  if (!STI.hasVFP3() || STI.hasD16()) {
+    static_assert(ARM::D31 == ARM::D16 + 15, "Register list not consecutive!");
+    Reserved.set(ARM::D16, ARM::D31 + 1);
+  }
+  const TargetRegisterClass *RC  = &ARM::GPRPairRegClass;
+  for(TargetRegisterClass::iterator I = RC->begin(), E = RC->end(); I!=E; ++I)
+    for (MCSubRegIterator SI(*I, this); SI.isValid(); ++SI)
+      if (Reserved.test(*SI)) Reserved.set(*I);
+
+  return Reserved;
+}
+
 const TargetRegisterClass *
 ARMBaseRegisterInfo::getLargestLegalSuperClass(const TargetRegisterClass *RC,
                                                const MachineFunction &) const {
