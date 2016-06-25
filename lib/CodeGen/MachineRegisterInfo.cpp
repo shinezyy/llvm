@@ -444,8 +444,8 @@ void MachineRegisterInfo::freezeReservedRegs(const MachineFunction &MF) {
          "Invalid ReservedRegs vector from target");
 }
 
-void MachineRegisterInfo::refreezeReservedRegs(const MachineFunction &MF) {
-  ReservedRegs = getTargetRegisterInfo()->getReservedRegs(MF, true);
+void MachineRegisterInfo::refreezeReservedRegs(const MachineFunction &MF, bool enable_sram) {
+  ReservedRegs = getTargetRegisterInfo()->getReservedRegs(MF, enable_sram);
   assert(ReservedRegs.size() == getTargetRegisterInfo()->getNumRegs() &&
          "Invalid ReservedRegs vector from target");
 }

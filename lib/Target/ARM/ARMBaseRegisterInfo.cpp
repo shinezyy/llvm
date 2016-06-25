@@ -161,14 +161,13 @@ getReservedRegs(const MachineFunction &MF) const {
   const ARMSubtarget &STI = MF.getSubtarget<ARMSubtarget>();
   const ARMFrameLowering *TFI = getFrameLowering(MF);
 
+  DEBUG(dbgs() << "getReservedRegs(MF) was called\n");
   // FIXME: avoid re-calculating this every time.
   BitVector Reserved(getNumRegs());
   Reserved.set(ARM::SP);
   Reserved.set(ARM::PC);
   Reserved.set(ARM::FPSCR);
   Reserved.set(ARM::APSR_NZCV);
-  Reserved.set(ARM::R4);
-  Reserved.set(ARM::R5);
   if (TFI->hasFP(MF))
     Reserved.set(getFramePointerReg(STI));
   if (hasBasePointer(MF))
@@ -194,6 +193,7 @@ getReservedRegs(const MachineFunction &MF, bool enable_sram) const {
   const ARMSubtarget &STI = MF.getSubtarget<ARMSubtarget>();
   const ARMFrameLowering *TFI = getFrameLowering(MF);
 
+  DEBUG(dbgs() << "getReservedRegs(MF, enable_sram) was called\n");
   // FIXME: avoid re-calculating this every time.
   BitVector Reserved(getNumRegs());
   Reserved.set(ARM::SP);

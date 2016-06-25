@@ -2585,6 +2585,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
                << "********** Function: " << mf.getName() << '\n');
 
   MF = &mf;
+  MRI->refreezeReservedRegs(mf, false);
   TRI = MF->getSubtarget().getRegisterInfo();
   TII = MF->getSubtarget().getInstrInfo();
   RCI.runOnMachineFunction(mf);
@@ -2741,7 +2742,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 
     written_pregs.clear();
   }
-  MRI->refreezeReservedRegs(VRM->getMachineFunction());
+  MRI->refreezeReservedRegs(mf, true);
   releaseMemory();
   return true;
 }
