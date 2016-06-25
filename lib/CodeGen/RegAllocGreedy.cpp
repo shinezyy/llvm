@@ -418,45 +418,17 @@ private:
   bool isUnusedCalleeSavedReg(unsigned PhysReg) const;
 
   // ZYY: my functions:
-  unsigned SramRegisters[8] = {66, 67, 68, 69, 74, 75, 76, 77};
-  unsigned SramRegUsage[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-
-  bool isNvm(unsigned physReg) {
-    std::set<unsigned> SramSet(SramRegisters, SramRegisters + 8);
-    return SramSet.find(physReg) == SramSet.end();
-  }
-
-  unsigned getUnusedSramReg() { // for temporaries only
-    for (unsigned i = 4; i < 8; ++i) {
-      if (SramRegUsage[i] == 0 && !MRI->isReserved(SramRegisters[i])) {
-        SramRegUsage[i] = 1;
-        return SramRegisters[i];
-      }
-    }
-    return 0;
-  }
-
-  unsigned findSramSubstitude(unsigned physReg) {
-    if (MRI->isReserved(physReg)) {
-      DEBUG(dbgs() << "will not look for substitution" << "\n");
-      return 0;
-    }
-    switch (physReg) {
-      case 70:
-      case 71:
-      case 72:
-      case 73:
-        {
-          DEBUG(dbgs() << "is to look for substitution" << "\n");
-          return getUnusedSramReg();
-        }
-      default:
-        {
-          DEBUG(dbgs() << "will not look for substitution" << "\n");
-          return 0;
-        }
-   }
-  }  
+  static const unsigned numSramReg = 2;
+  unsigned SramRegisters[numSramReg] = {70, 71};
+  
+  std::vector<std::vector<LiveRange::Segment *> * > assignedRanges; 
+  //[ 
+  //  [ [1, 4)
+  //    [6, 9) ]
+  //  [ [2, 7) ]
+  //           ]
+  
+  bool canAssign(unsigned preg, unsigned vreg);
   void remapPhysReg(MachineFunction *MF, unsigned preg0, unsigned preg1);
 };
 
@@ -2662,6 +2634,10 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   DEBUG(VRM->print(dbgs()));
   DEBUG(dbgs() << "YY: printed final mapping inside Greedy\n");
 
+  for (unsigned i = 0; i < numSramReg; ++i) {
+    assignedRanges.push_back(new std::vector<LiveRange::Segment *>);
+  }
+
   DEBUG(dbgs() << "YY: is going to find HFBB\n");
   std::vector<MachineBasicBlock *> HFBBs;
   unsigned numHFBBLimit = 5;
@@ -2713,49 +2689,44 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
           DEBUG(dbgs() << "Virtual Register " << Reg
               << " has been assigned to Physical Register " << PhysReg << "\n" );
         }
-        /*
-        else if (TRI->isPhysicalRegister(Reg)) {
-          PhysReg = Reg;
-        }
-        */
         else {
           continue;
         }
         if (MO.isDef() && PhysReg != VirtRegMap::NO_PHYS_REG) {
           DEBUG(dbgs() << "insert physical register " << PhysReg
               << " to written set\n");
-          written_pregs.insert(PhysReg);
+          written_pregs.insert(Reg); // insert **virtual** reg!
+        }
+      }
+    }
+    for (std::set<unsigned>::iterator it = written_pregs.begin(),
+        it_end = written_pregs.end(); it != it_end; it++) {
+      DEBUG(dbgs() << "Virtual Register: No" << *it << ", "
+          << PrintReg(*it, TRI) << " was written" << "in hotspot\n");
+      for (unsigned i = 0; i < numSramReg; ++i) {
+        if (canAssign(SramRegisters[i], *it)) {
+          // remap it
         }
       }
     }
   }
-  for (std::set<unsigned>::iterator it = written_pregs.begin(),
-      it_end = written_pregs.end(); it != it_end; it++) {
-    DEBUG(dbgs() << "Physical Register: No" << *it << ", "
-        << PrintReg(*it, TRI) << " was written" << "in hotspot\n");
-  }
   DEBUG(dbgs() << "YY: found writes in HFBBs\n");
 
+  releaseMemory();
+  return true;
+}
 
-  std::set<unsigned> SramSet(SramRegisters, SramRegisters + 8);
-  unsigned sram_subst = 0;
-  // reinit SRAM usage
-  for (unsigned i = 0; i < 8; ++i) {
-    SramRegUsage[i] = 0;
-  }
-  for (std::set<unsigned>::iterator it = written_pregs.begin(),
-      it_end = written_pregs.end(); it != it_end; it++) {
-    if (isNvm(*it) && (sram_subst = findSramSubstitude(*it))) { // remappable 
-      DEBUG(dbgs() << "it is NVM: " << isNvm(*it) << "\n");
-      DEBUG(dbgs() << "YY: is to remap physical regsiter: substitute "
-          << PrintReg(*it, TRI) << " with " << PrintReg(sram_subst, TRI)
-          << "\n");
-      remapPhysReg(MF, *it, sram_subst);
-      DEBUG(dbgs() << "YY: remap physical regsiters\n");
+bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
+  std::vector<LiveRange::Segment *> *preg_range = 
+    assignedRanges[preg - SramRegisters[0]];
+  for (unsigned i = 0; i < preg_range->size(); ++i) {
+    LiveRange::Segment *pseg = (*preg_range)[i];
+    for (const LiveRange::Segment& vseg : LIS->getInterval(vreg).segments) {
+      if (pseg->contains(vseg.start) || pseg->contains(vseg.end /*- 1*/)) {
+        return false;
+      }
     }
   }
-
-  releaseMemory();
   return true;
 }
 
