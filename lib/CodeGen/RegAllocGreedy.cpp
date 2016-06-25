@@ -2585,7 +2585,6 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
                << "********** Function: " << mf.getName() << '\n');
 
   MF = &mf;
-  MRI->refreezeReservedRegs(mf, false);
   TRI = MF->getSubtarget().getRegisterInfo();
   TII = MF->getSubtarget().getInstrInfo();
   RCI.runOnMachineFunction(mf);
@@ -2600,6 +2599,9 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   RegAllocBase::init(getAnalysis<VirtRegMap>(),
                      getAnalysis<LiveIntervals>(),
                      getAnalysis<LiveRegMatrix>());
+
+  //MRI->refreezeReservedRegs(mf, false);
+
   Indexes = &getAnalysis<SlotIndexes>();
   MBFI = &getAnalysis<MachineBlockFrequencyInfo>();
   DomTree = &getAnalysis<MachineDominatorTree>();
@@ -2713,13 +2715,13 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
     for (std::set<unsigned>::iterator it = written_pregs.begin(),
         it_end = written_pregs.end(); it != it_end; it++) {
       unsigned i ;
-      DEBUG(dbgs() << "locate bug 1\n");
       for (i = 0; i < numSramReg; ++i) {
-      DEBUG(dbgs() << "locate bug 2\n");
         if (canAssign(SramRegisters[i], *it)) {
           // remap it
+          /*
           DEBUG(dbgs() << "is about to reassign " << PrintReg(*it, TRI)
               << " to " << PrintReg(SramRegisters[i], TRI) <<"\n");
+              */
           VRM->reAssignVirt2Phys(*it, SramRegisters[i]);
           std::vector<const LiveRange::Segment *> *preg_range = assignedRanges[i];
           LiveRange::Segments &vreg_segs = LIS->getInterval(*it).segments; 
@@ -2753,19 +2755,17 @@ bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
   for (unsigned i = 0; i < preg_range->size(); ++i) {
     const LiveRange::Segment *pseg = (*preg_range)[i];
     for (const LiveRange::Segment &vseg : LIS->getInterval(vreg).segments) {
-      DEBUG(dbgs() << "locate bug 7\n");
       DEBUG(dbgs() << "start: " << vseg.start << ", end: " << vseg.end << "\n");
-      DEBUG(dbgs() << "locate bug 8\n");
       bool st = pseg->contains(vseg.start);
-      DEBUG(dbgs() << "locate bug 9\n");
       bool ed = pseg->contains(vseg.end);
-      DEBUG(dbgs() << "locate bug 10\n");
       if (st || ed) {
         return false;
       }
     }
-    DEBUG(dbgs() << "locate bug 11\n");
   }
-  DEBUG(dbgs() << "locate bug 12\n");
+  for (const LiveRange::Segment &vseg : LIS->getInterval(vreg).segments) {
+    DEBUG(dbgs() << "is to use range " << vseg.start << " ~ " << vseg.end 
+        << " of " << PrintReg(preg, TRI) << "\n");
+  }
   return true;
 }

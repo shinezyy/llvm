@@ -190,10 +190,10 @@ getReservedRegs(const MachineFunction &MF) const {
 
 BitVector ARMBaseRegisterInfo::
 getReservedRegs(const MachineFunction &MF, bool enable_sram) const {
+  DEBUG(dbgs() << "getReservedRegs(MF, enable_sram) was called 1\n");
   const ARMSubtarget &STI = MF.getSubtarget<ARMSubtarget>();
   const ARMFrameLowering *TFI = getFrameLowering(MF);
 
-  DEBUG(dbgs() << "getReservedRegs(MF, enable_sram) was called\n");
   // FIXME: avoid re-calculating this every time.
   BitVector Reserved(getNumRegs());
   Reserved.set(ARM::SP);

@@ -491,6 +491,7 @@ public:
   virtual BitVector getReservedRegs(const MachineFunction &MF) const = 0;
 
   virtual BitVector getReservedRegs(const MachineFunction &MF, bool enable_sram) const {
+    dbgs() << "fuck func was called\n";
     if (enable_sram) {
       BitVector resv(0);
       return resv;

@@ -59,7 +59,8 @@ void RegAllocBase::init(VirtRegMap &vrm,
   VRM = &vrm;
   LIS = &lis;
   Matrix = &mat;
-  MRI->freezeReservedRegs(vrm.getMachineFunction());
+  // MRI->freezeReservedRegs(vrm.getMachineFunction());
+  MRI->refreezeReservedRegs(vrm.getMachineFunction(), false);
   RegClassInfo.runOnMachineFunction(vrm.getMachineFunction());
 }
 
