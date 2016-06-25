@@ -421,7 +421,7 @@ private:
   static const unsigned numSramReg = 2;
   unsigned SramRegisters[numSramReg] = {70, 71};
   
-  std::vector<std::vector<LiveRange::Segment *> * > assignedRanges; 
+  std::vector<std::vector<const LiveRange::Segment *> * > assignedRanges; 
   //[ 
   //  [ [1, 4)
   //    [6, 9) ]
@@ -2635,7 +2635,8 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   DEBUG(dbgs() << "YY: printed final mapping inside Greedy\n");
 
   for (unsigned i = 0; i < numSramReg; ++i) {
-    assignedRanges.push_back(new std::vector<LiveRange::Segment *>);
+    std::vector<const LiveRange::Segment *> *v = new std::vector<const LiveRange::Segment *>;
+    assignedRanges.push_back(v);
   }
 
   DEBUG(dbgs() << "YY: is going to find HFBB\n");
@@ -2701,14 +2702,28 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
     }
     for (std::set<unsigned>::iterator it = written_pregs.begin(),
         it_end = written_pregs.end(); it != it_end; it++) {
-      DEBUG(dbgs() << "Virtual Register: No" << *it << ", "
-          << PrintReg(*it, TRI) << " was written" << "in hotspot\n");
-      for (unsigned i = 0; i < numSramReg; ++i) {
+
+      unsigned i ;
+      for (i = 0; i < numSramReg; ++i) {
         if (canAssign(SramRegisters[i], *it)) {
           // remap it
+          DEBUG(dbgs() << "is about to reassign " << PrintReg(*it, TRI)
+              << "to " << PrintReg(SramRegisters[i], TRI) <<"\n");
+          VRM->reAssignVirt2Phys(*it, SramRegisters[i]);
+          std::vector<const LiveRange::Segment *> *preg_range = assignedRanges[i];
+          LiveRange::Segments &vreg_segs = LIS->getInterval(*it).segments; 
+          for (unsigned j = 0; j < vreg_segs.size(); j++) {
+            preg_range->push_back(&vreg_segs[i]);
+          }
+          break;
         }
       }
+
+      if (i == numSramReg) {
+        DEBUG(dbgs() << PrintReg(*it, TRI) << " can not be reassign to SRAM reg\n");
+      }
     }
+    written_pregs.clear();
   }
   DEBUG(dbgs() << "YY: found writes in HFBBs\n");
 
@@ -2717,45 +2732,15 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 }
 
 bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
-  std::vector<LiveRange::Segment *> *preg_range = 
+  std::vector<const LiveRange::Segment *> *preg_range = 
     assignedRanges[preg - SramRegisters[0]];
   for (unsigned i = 0; i < preg_range->size(); ++i) {
-    LiveRange::Segment *pseg = (*preg_range)[i];
-    for (const LiveRange::Segment& vseg : LIS->getInterval(vreg).segments) {
+    const LiveRange::Segment *pseg = (*preg_range)[i];
+    for (const LiveRange::Segment &vseg : LIS->getInterval(vreg).segments) {
       if (pseg->contains(vseg.start) || pseg->contains(vseg.end /*- 1*/)) {
         return false;
       }
     }
   }
   return true;
-}
-
-void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
-  for (unsigned i = 0, e = MRI->getNumVirtRegs(); i!=e; ++i) {
-    unsigned Reg = TargetRegisterInfo::index2VirtReg(i);
-    unsigned PhysReg = 0;
-    if (TRI->isVirtualRegister(Reg))
-      PhysReg = VRM->getPhys(Reg);
-    else {
-      DEBUG(dbgs() << "NOT physical register!! [dangerous]\n");
-      continue;
-    }
-    DEBUG(dbgs() << "Virtual Register: " << Reg << "\n");
-    if (PhysReg == reg0) {
-      VRM->reAssignVirt2Phys(Reg, reg1);
-      assert(VRM->getPhys(Reg) == reg1 && "reAssigning failed");
-      DEBUG(dbgs() << "YY: is to reassign physical regsiter "
-          << PrintReg(reg1, TRI) << " to " << PrintReg(Reg, TRI)
-          << " instead of " << PrintReg(PhysReg, TRI)
-          << "\n");
-    }
-    else if (PhysReg == reg1) {
-      VRM->reAssignVirt2Phys(Reg, reg0);
-      assert(VRM->getPhys(Reg) == reg0 && "reAssigning failed");
-      DEBUG(dbgs() << "YY: is to reassign physical regsiter "
-          << PrintReg(reg0, TRI) << " to " << PrintReg(Reg, TRI)
-          << " instead of " << PrintReg(PhysReg, TRI)
-          << "\n");
-    }
-  }
 }
