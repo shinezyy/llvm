@@ -2634,9 +2634,17 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   DEBUG(VRM->print(dbgs()));
   DEBUG(dbgs() << "YY: printed final mapping inside Greedy\n");
 
-  for (unsigned i = 0; i < numSramReg; ++i) {
-    std::vector<const LiveRange::Segment *> *v = new std::vector<const LiveRange::Segment *>;
-    assignedRanges.push_back(v);
+  if (assignedRanges.size() == numSramReg) {
+    for (unsigned i = 0; i < numSramReg; ++i) {
+      delete assignedRanges[i];
+      assignedRanges[i] = new std::vector<const LiveRange::Segment *>;
+    }
+  }
+  else {
+    for (unsigned i = 0; i < numSramReg; ++i) {
+      std::vector<const LiveRange::Segment *> *v = new std::vector<const LiveRange::Segment *>;
+      assignedRanges.push_back(v);
+    }
   }
 
   DEBUG(dbgs() << "YY: is going to find HFBB\n");
@@ -2704,7 +2712,9 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
     for (std::set<unsigned>::iterator it = written_pregs.begin(),
         it_end = written_pregs.end(); it != it_end; it++) {
       unsigned i ;
+      DEBUG(dbgs() << "locate bug 1\n");
       for (i = 0; i < numSramReg; ++i) {
+      DEBUG(dbgs() << "locate bug 2\n");
         if (canAssign(SramRegisters[i], *it)) {
           // remap it
           DEBUG(dbgs() << "is about to reassign " << PrintReg(*it, TRI)
@@ -2742,10 +2752,19 @@ bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
   for (unsigned i = 0; i < preg_range->size(); ++i) {
     const LiveRange::Segment *pseg = (*preg_range)[i];
     for (const LiveRange::Segment &vseg : LIS->getInterval(vreg).segments) {
-      if (pseg->contains(vseg.start) || pseg->contains(vseg.end /*- 1*/)) {
+      DEBUG(dbgs() << "locate bug 7\n");
+      DEBUG(dbgs() << "start: " << vseg.start << ", end: " << vseg.end << "\n");
+      DEBUG(dbgs() << "locate bug 8\n");
+      bool st = pseg->contains(vseg.start);
+      DEBUG(dbgs() << "locate bug 9\n");
+      bool ed = pseg->contains(vseg.end);
+      DEBUG(dbgs() << "locate bug 10\n");
+      if (st || ed) {
         return false;
       }
     }
+    DEBUG(dbgs() << "locate bug 11\n");
   }
+  DEBUG(dbgs() << "locate bug 12\n");
   return true;
 }
