@@ -416,7 +416,50 @@ private:
   void collectHintInfo(unsigned, HintsInfo &);
 
   bool isUnusedCalleeSavedReg(unsigned PhysReg) const;
+
+  // ZYY: my functions:
+  unsigned SramRegisters[8] = {66, 67, 68, 69, 74, 75, 76, 77};
+  unsigned SramRegUsage[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+  bool isNvm(unsigned physReg) {
+    std::set<unsigned> SramSet(SramRegisters, SramRegisters + 8);
+    return SramSet.find(physReg) == SramSet.end();
+  }
+
+  unsigned getUnusedSramReg() { // for temporaries only
+    for (unsigned i = 4; i < 8; ++i) {
+      if (SramRegUsage[i] == 0 && !MRI->isReserved(SramRegisters[i])) {
+        SramRegUsage[i] = 1;
+        return SramRegisters[i];
+      }
+    }
+    return 0;
+  }
+
+  unsigned findSramSubstitude(unsigned physReg) {
+    if (MRI->isReserved(physReg)) {
+      DEBUG(dbgs() << "will not look for substitution" << "\n");
+      return 0;
+    }
+    switch (physReg) {
+      case 70:
+      case 71:
+      case 72:
+      case 73:
+        {
+          DEBUG(dbgs() << "is to look for substitution" << "\n");
+          return getUnusedSramReg();
+        }
+      default:
+        {
+          DEBUG(dbgs() << "will not look for substitution" << "\n");
+          return 0;
+        }
+   }
+  }  
+  void remapPhysReg(MachineFunction *MF, unsigned preg0, unsigned preg1);
 };
+
 } // end anonymous namespace
 
 char RAGreedy::ID = 0;
@@ -2608,9 +2651,16 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   GlobalCand.resize(32);  // This will grow as needed.
   SetOfBrokenHints.clear();
 
+  DEBUG(dbgs() << "YY: is going to allocate physical registers\n");
   allocatePhysRegs();
+  DEBUG(dbgs() << "YY: finished allocating physical registers\n");
   tryHintsRecoloring();
+
   postOptimization();
+
+  DEBUG(dbgs() << "YY: is going to print final mapping inside Greeedy\n");
+  DEBUG(VRM->print(dbgs()));
+  DEBUG(dbgs() << "YY: printed final mapping inside Greedy\n");
 
   DEBUG(dbgs() << "YY: is going to find HFBB\n");
   std::vector<MachineBasicBlock *> HFBBs;
@@ -2640,6 +2690,101 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   }
   DEBUG(dbgs() << "YY: found HFBB\n");
 
+  DEBUG(dbgs() << "YY: is going to find writes in HFBBs\n");
+  std::set<unsigned> written_pregs;
+  for (unsigned i = 0; i < numHFBB; i++) {
+    DEBUG(HFBBs[i]->print(dbgs(), Indexes)); 
+    DEBUG(dbgs() << "Freq: " 
+        << MBFI->getBlockFreq(HFBBs[i]).getFrequency() << "\n");
+    for (MachineBasicBlock::instr_iterator MII = HFBBs[i]->instr_begin(),
+        MIE = HFBBs[i]->instr_end(); MII != MIE;) {
+      MachineInstr *MI = &*MII;
+      ++MII;
+      for (MachineInstr::mop_iterator MOI = MI->operands_begin(),
+          MOE = MI->operands_end(); MOI != MOE; ++MOI) {
+        MachineOperand &MO = *MOI;
+        if (!MO.isReg()) {
+          continue;
+        }
+        unsigned Reg = MO.getReg();
+        unsigned PhysReg;
+        if (TRI->isVirtualRegister(Reg)) {
+          PhysReg = VRM->getPhys(Reg);
+          DEBUG(dbgs() << "Virtual Register " << Reg
+              << " has been assigned to Physical Register " << PhysReg << "\n" );
+        }
+        /*
+        else if (TRI->isPhysicalRegister(Reg)) {
+          PhysReg = Reg;
+        }
+        */
+        else {
+          continue;
+        }
+        if (MO.isDef() && PhysReg != VirtRegMap::NO_PHYS_REG) {
+          DEBUG(dbgs() << "insert physical register " << PhysReg
+              << " to written set\n");
+          written_pregs.insert(PhysReg);
+        }
+      }
+    }
+  }
+  for (std::set<unsigned>::iterator it = written_pregs.begin(),
+      it_end = written_pregs.end(); it != it_end; it++) {
+    DEBUG(dbgs() << "Physical Register: No" << *it << ", "
+        << PrintReg(*it, TRI) << " was written" << "in hotspot\n");
+  }
+  DEBUG(dbgs() << "YY: found writes in HFBBs\n");
+
+
+  std::set<unsigned> SramSet(SramRegisters, SramRegisters + 8);
+  unsigned sram_subst = 0;
+  // reinit SRAM usage
+  for (unsigned i = 0; i < 8; ++i) {
+    SramRegUsage[i] = 0;
+  }
+  for (std::set<unsigned>::iterator it = written_pregs.begin(),
+      it_end = written_pregs.end(); it != it_end; it++) {
+    if (isNvm(*it) && (sram_subst = findSramSubstitude(*it))) { // remappable 
+      DEBUG(dbgs() << "it is NVM: " << isNvm(*it) << "\n");
+      DEBUG(dbgs() << "YY: is to remap physical regsiter: substitute "
+          << PrintReg(*it, TRI) << " with " << PrintReg(sram_subst, TRI)
+          << "\n");
+      remapPhysReg(MF, *it, sram_subst);
+      DEBUG(dbgs() << "YY: remap physical regsiters\n");
+    }
+  }
+
   releaseMemory();
   return true;
+}
+
+void RAGreedy::remapPhysReg(MachineFunction *MF, unsigned reg0, unsigned reg1) {
+  for (unsigned i = 0, e = MRI->getNumVirtRegs(); i!=e; ++i) {
+    unsigned Reg = TargetRegisterInfo::index2VirtReg(i);
+    unsigned PhysReg = 0;
+    if (TRI->isVirtualRegister(Reg))
+      PhysReg = VRM->getPhys(Reg);
+    else {
+      DEBUG(dbgs() << "NOT physical register!! [dangerous]\n");
+      continue;
+    }
+    DEBUG(dbgs() << "Virtual Register: " << Reg << "\n");
+    if (PhysReg == reg0) {
+      VRM->reAssignVirt2Phys(Reg, reg1);
+      assert(VRM->getPhys(Reg) == reg1 && "reAssigning failed");
+      DEBUG(dbgs() << "YY: is to reassign physical regsiter "
+          << PrintReg(reg1, TRI) << " to " << PrintReg(Reg, TRI)
+          << " instead of " << PrintReg(PhysReg, TRI)
+          << "\n");
+    }
+    else if (PhysReg == reg1) {
+      VRM->reAssignVirt2Phys(Reg, reg0);
+      assert(VRM->getPhys(Reg) == reg0 && "reAssigning failed");
+      DEBUG(dbgs() << "YY: is to reassign physical regsiter "
+          << PrintReg(reg0, TRI) << " to " << PrintReg(Reg, TRI)
+          << " instead of " << PrintReg(PhysReg, TRI)
+          << "\n");
+    }
+  }
 }
