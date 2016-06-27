@@ -429,6 +429,7 @@ private:
   //           ]
   
   bool canAssign(unsigned preg, unsigned vreg);
+  bool isSram(unsigned preg);
   void remapPhysReg(MachineFunction *MF, unsigned preg0, unsigned preg1);
 };
 
@@ -2704,7 +2705,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
         else {
           continue;
         }
-        if (MO.isDef() && PhysReg != VirtRegMap::NO_PHYS_REG) {
+        if (MO.isDef() && PhysReg != VirtRegMap::NO_PHYS_REG && !isSram(PhysReg)) {
           DEBUG(dbgs() << "insert  " << PrintReg(Reg, TRI) << " to written set.\n");
           written_pregs.insert(Reg); // insert **virtual** reg!
         }
@@ -2752,6 +2753,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
   std::vector<const LiveRange::Segment *> *preg_range = 
     assignedRanges[preg - SramRegisters[0]];
+  /*
   for (unsigned i = 0; i < preg_range->size(); ++i) {
     const LiveRange::Segment *pseg = (*preg_range)[i];
     for (const LiveRange::Segment &vseg : LIS->getInterval(vreg).segments) {
@@ -2763,9 +2765,48 @@ bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
       }
     }
   }
-  for (const LiveRange::Segment &vseg : LIS->getInterval(vreg).segments) {
+  */
+  unsigned x = 0, y = 0;
+  SmallVector<LiveRange::Segment, 2>& segs = LIS->getInterval(vreg).segments;
+  while (segs.size() > 0 && preg_range->size() > 0) {
+    DEBUG(dbgs() << "x: " << x << ", y: " << y << "\n");
+    const LiveRange::Segment *pseg = (*preg_range)[x];
+    const LiveRange::Segment &vseg = segs[y];
+    if (pseg->contains(vseg.start) ||
+        pseg->contains(vseg.end) ||
+        vseg.contains(pseg->start) ||
+        vseg.contains(pseg->end))
+      return false;
+    if (pseg->end >= vseg.end) {
+      if (y < segs.size() - 1)
+        y++;
+      else if (x < preg_range->size() - 1)
+        x++;
+      else
+        break;
+    }
+    else {
+      if (x < preg_range->size() - 1)
+        x++;
+      else if (y < segs.size() - 1)
+        y++;
+      else
+        break;
+    }
+  }
+
+  for (const LiveRange::Segment &vseg : segs) {
     DEBUG(dbgs() << "is to use range " << vseg.start << " ~ " << vseg.end 
         << " of " << PrintReg(preg, TRI) << "\n");
   }
   return true;
+}
+
+bool RAGreedy::isSram(unsigned preg) {
+  for (unsigned i = 0; i < numSramReg; ++i) {
+    if (preg == SramRegisters[i]) {
+      return true;
+    }
+  }
+  return false;
 }
