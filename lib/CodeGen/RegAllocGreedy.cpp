@@ -2751,50 +2751,19 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 }
 
 bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
-  std::vector<const LiveRange::Segment *> *preg_range = 
-    assignedRanges[preg - SramRegisters[0]];
-  /*
+  std::vector<const LiveRange::Segment *> *preg_range = assignedRanges[preg - SramRegisters[0]];
+  SmallVector<LiveRange::Segment, 2>& segs = LIS->getInterval(vreg).segments;
   for (unsigned i = 0; i < preg_range->size(); ++i) {
     const LiveRange::Segment *pseg = (*preg_range)[i];
-    for (const LiveRange::Segment &vseg : LIS->getInterval(vreg).segments) {
+    for (const LiveRange::Segment &vseg : segs) {
       DEBUG(dbgs() << "start: " << vseg.start << ", end: " << vseg.end << "\n");
-      bool st = pseg->contains(vseg.start);
-      bool ed = pseg->contains(vseg.end);
-      if (st || ed) {
+      if (pseg->contains(vseg.start) ||
+          pseg->contains(vseg.end) ||
+          vseg.contains(pseg->start) ||
+          vseg.contains(pseg->end))
         return false;
       }
-    }
   }
-  */
-  unsigned x = 0, y = 0;
-  SmallVector<LiveRange::Segment, 2>& segs = LIS->getInterval(vreg).segments;
-  while (segs.size() > 0 && preg_range->size() > 0) {
-    DEBUG(dbgs() << "x: " << x << ", y: " << y << "\n");
-    const LiveRange::Segment *pseg = (*preg_range)[x];
-    const LiveRange::Segment &vseg = segs[y];
-    if (pseg->contains(vseg.start) ||
-        pseg->contains(vseg.end) ||
-        vseg.contains(pseg->start) ||
-        vseg.contains(pseg->end))
-      return false;
-    if (pseg->end >= vseg.end) {
-      if (y < segs.size() - 1)
-        y++;
-      else if (x < preg_range->size() - 1)
-        x++;
-      else
-        break;
-    }
-    else {
-      if (x < preg_range->size() - 1)
-        x++;
-      else if (y < segs.size() - 1)
-        y++;
-      else
-        break;
-    }
-  }
-
   for (const LiveRange::Segment &vseg : segs) {
     DEBUG(dbgs() << "is to use range " << vseg.start << " ~ " << vseg.end 
         << " of " << PrintReg(preg, TRI) << "\n");
