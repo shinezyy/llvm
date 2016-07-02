@@ -47,6 +47,7 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include <queue>
+#include <algorithm>
 
 using namespace llvm;
 
@@ -2653,35 +2654,27 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 
   DEBUG(dbgs() << "YY: is going to find HFBB\n");
   std::vector<MachineBasicBlock *> HFBBs;
-  unsigned numHFBBLimit = 5;
-  unsigned numHFBB = 0; // number of high-frequency BBs
   for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
       MBBI != MBBE; ++MBBI) {
     //DEBUG(MBBI->print(dbgs(), Indexes)); 
     DEBUG(dbgs() << "Freq: " << MBFI->getBlockFreq(&*MBBI).getFrequency() << "\n");
-    if (numHFBB < numHFBBLimit) {
-      HFBBs.push_back(&*MBBI);
-      ++numHFBB;
-      continue;
-    }
-
-    BlockFrequency min = MBFI->getBlockFreq(HFBBs[0]);
-    unsigned min_idx = 0;
-    for (unsigned i = 1; i < numHFBBLimit; ++i) {
-      if (MBFI->getBlockFreq(HFBBs[i]) < min) {
-        min = MBFI->getBlockFreq(HFBBs[i]);
-        min_idx = i;
-      }
-    }
-    if (MBFI->getBlockFreq(&*MBBI) > min) {
-      HFBBs[min_idx] = &*MBBI;
-    }
+    HFBBs.push_back(&*MBBI);
   }
+
+  // sort
+  std::sort(HFBBs.begin(), HFBBs.end(),
+      [this](const MachineBasicBlock* a, const MachineBasicBlock* b) -> bool
+      {
+        return MBFI->getBlockFreq(a).getFrequency() >
+        MBFI->getBlockFreq(a).getFrequency();
+      });
+
   DEBUG(dbgs() << "YY: found HFBB\n");
+  // codes above should sort HFBBs by freq UpDown
 
   DEBUG(dbgs() << "YY: is going to find writes in HFBBs\n");
   std::set<unsigned> written_pregs;
-  for (unsigned i = 0; i < numHFBB; i++) {
+  for (unsigned i = 0; i < HFBBs.size(); i++) {
     DEBUG(HFBBs[i]->print(dbgs(), Indexes)); 
     DEBUG(dbgs() << "Freq: " 
         << MBFI->getBlockFreq(HFBBs[i]).getFrequency() << "\n");
