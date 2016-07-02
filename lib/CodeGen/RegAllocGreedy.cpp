@@ -429,7 +429,7 @@ private:
   //  [ [2, 7) ]
   //           ]
   
-  bool canAssign(unsigned preg, unsigned vreg);
+  bool canAssign(unsigned preg, unsigned vreg, int BBlength);
   bool isSram(unsigned preg);
   void remapPhysReg(MachineFunction *MF, unsigned preg0, unsigned preg1);
 };
@@ -2652,7 +2652,7 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
     }
   }
 
-  DEBUG(dbgs() << "YY: is going to find HFBB\n");
+  DEBUG(dbgs() << "YY: is going to sort HFBB\n");
   std::vector<MachineBasicBlock *> HFBBs;
   for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
       MBBI != MBBE; ++MBBI) {
@@ -2666,10 +2666,10 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
       [this](const MachineBasicBlock* a, const MachineBasicBlock* b) -> bool
       {
         return MBFI->getBlockFreq(a).getFrequency() >
-        MBFI->getBlockFreq(a).getFrequency();
+        MBFI->getBlockFreq(b).getFrequency();
       });
 
-  DEBUG(dbgs() << "YY: found HFBB\n");
+  DEBUG(dbgs() << "YY: sorted HFBB\n");
   // codes above should sort HFBBs by freq UpDown
 
   DEBUG(dbgs() << "YY: is going to find writes in HFBBs\n");
@@ -2706,16 +2706,20 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
     }
 
     DEBUG(dbgs() << "ZYY: is going to reassign\n");
+    int BBlength = 0;
+    if (!HFBBs[i]->empty()) {
+      const MachineInstr& BBStartInstr = HFBBs[i]->front();
+      const MachineInstr& BBEndInstr = HFBBs[i]->back();
+      SlotIndex BBStartSlot = Indexes->getInstructionIndex(BBStartInstr);
+      SlotIndex BBEndSlot = Indexes->getInstructionIndex(BBEndInstr);
+      BBlength = BBEndSlot.getInstrDistance(BBStartSlot);
+    }
+
     for (std::set<unsigned>::iterator it = written_pregs.begin(),
         it_end = written_pregs.end(); it != it_end; it++) {
       unsigned i ;
       for (i = 0; i < numSramReg; ++i) {
-        if (canAssign(SramRegisters[i], *it)) {
-          // remap it
-          /*
-          DEBUG(dbgs() << "is about to reassign " << PrintReg(*it, TRI)
-              << " to " << PrintReg(SramRegisters[i], TRI) <<"\n");
-              */
+        if (canAssign(SramRegisters[i], *it, BBlength)) {
           VRM->reAssignVirt2Phys(*it, SramRegisters[i]);
           std::vector<const LiveRange::Segment *> *preg_range = assignedRanges[i];
           LiveRange::Segments &vreg_segs = LIS->getInterval(*it).segments; 
@@ -2726,7 +2730,6 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
           break;
         }
       }
-
       if (i == numSramReg) {
         DEBUG(dbgs() << PrintReg(*it, TRI) << " can not be reassigned to SRAM reg\n");
       }
@@ -2743,19 +2746,21 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
   return true;
 }
 
-bool RAGreedy::canAssign(unsigned preg, unsigned vreg) {
+bool RAGreedy::canAssign(unsigned preg, unsigned vreg, int BBlength) {
   std::vector<const LiveRange::Segment *> *preg_range = assignedRanges[preg - SramRegisters[0]];
   SmallVector<LiveRange::Segment, 2>& segs = LIS->getInterval(vreg).segments;
   for (unsigned i = 0; i < preg_range->size(); ++i) {
     const LiveRange::Segment *pseg = (*preg_range)[i];
     for (const LiveRange::Segment &vseg : segs) {
-      DEBUG(dbgs() << "start: " << vseg.start << ", end: " << vseg.end << "\n");
+      // DEBUG(dbgs() << "start: " << vseg.start << ", end: " << vseg.end << "\n");
       if (pseg->contains(vseg.start) ||
           pseg->contains(vseg.end) ||
           vseg.contains(pseg->start) ||
           vseg.contains(pseg->end))
         return false;
-      }
+      if (vseg.end.getInstrDistance(vseg.start) > 2*BBlength)
+        return false;
+    }
   }
   for (const LiveRange::Segment &vseg : segs) {
     DEBUG(dbgs() << "is to use range " << vseg.start << " ~ " << vseg.end 
